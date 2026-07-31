@@ -1,0 +1,25 @@
+Package: batchieR
+Type: Package
+Title: Bayesian Latent Factor Models for Combination Screens
+Version: 0.1.0
+Authors@R: c(
+    person(
+      "Teo", "Sakel",
+      email = "teo@intelligentbiodata.com",
+      role = c("aut", "cre")
+    )
+  )
+Description: Fits Bayesian latent factor models to combination-response
+    screens. The model captures context-specific treatment effects and
+    interactions while supporting covariate-informed means, structured priors,
+    hierarchical dose relationships, and configurable shrinkage. The approach
+    is inspired by the BATCHIE method described by Platt et al. (2024)
+    <doi:10.1038/s41467-024-55287-7>.
+License: GPL (>= 3)
+Encoding: UTF-8
+LazyData: true
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 8.0.0
