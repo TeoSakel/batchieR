@@ -6,7 +6,7 @@
 \alias{batchieR-package}
 \title{batchieR: Bayesian Latent Factor Models for Combination Screens}
 \description{
-Fits Bayesian latent factor models to combination-response screens. The model captures context-specific treatment effects and interactions while supporting covariate-informed means, structured priors, hierarchical dose relationships, and configurable shrinkage. The approach is inspired by the BATCHIE method described by Platt et al. (2024) \doi{10.1038/s41467-024-55287-7}.
+Fits Bayesian latent factor models to combination-response screens. The model captures context-specific treatment effects and interactions while supporting covariate-informed means, structured priors, hierarchical dose relationships, and configurable shrinkage. The approach is inspired by the BATCHIE method described by Tosh et al. (2025) \doi{10.1038/s41467-024-55287-7}.
 }
 \author{
 \strong{Maintainer}: Teo Sakel \email{teo@intelligentbiodata.com}
