@@ -18,7 +18,13 @@ Description: Fits Bayesian latent factor models to combination-response
 License: GPL (>= 3)
 Encoding: UTF-8
 LazyData: true
+Imports:
+    Matrix,
+    methods
 Suggests:
+    bayesplot,
+    loo,
+    posterior,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)
