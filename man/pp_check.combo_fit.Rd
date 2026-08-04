@@ -6,33 +6,53 @@
 \usage{
 \method{pp_check}{combo_fit}(
   object,
-  type = c("dens_overlay", "ecdf_overlay", "intervals", "stat"),
-  ndraws = 50L,
+  type = c("dens_overlay", "ecdf_overlay", "intervals", "stat", "stat_2d", "error",
+    "loo_pit"),
+  ndraws = NULL,
   newdata = NULL,
-  stat = "mean",
+  stat = NULL,
+  group = NULL,
+  x = NULL,
   ...
 )
 }
 \arguments{
 \item{object}{A \code{combo_fit} object.}
 
-\item{type}{Check type: \code{"dens_overlay"}, \code{"ecdf_overlay"}, \code{"intervals"}, or \code{"stat"}.}
+\item{type}{Check type: \code{"dens_overlay"}, \code{"ecdf_overlay"}, \code{"intervals"},
+\code{"stat"}, \code{"stat_2d"}, \code{"error"}, or \code{"loo_pit"}.}
 
-\item{ndraws}{Positive number of posterior draws to plot, capped at the
-number of retained draws.}
+\item{ndraws}{\code{NULL}, or a positive number of posterior draws, capped at
+the retained draws. By default overlays use at most 50 draws and other
+non-LOO checks use all draws. LOO-PIT always uses all draws.}
 
-\item{newdata}{Optional combination-screen data containing responses. When
-\code{NULL}, the observed rows from the fitted input are used.}
+\item{newdata}{Optional data containing responses. LOO-PIT requires \code{NULL}
+because it is only defined for observations used to fit the model.}
 
-\item{stat}{Statistic passed to \code{\link[bayesplot:ppc_stat]{bayesplot::ppc_stat()}} when \code{type = "stat"}.}
+\item{stat}{Statistic for statistic or error checks. \code{NULL} uses \code{"mean"},
+except \code{type = "stat_2d"} uses \code{c("mean", "sd")}.}
 
-\item{...}{Additional arguments passed to the selected \code{bayesplot} function.}
+\item{group}{\code{NULL}, one source-data column name, or a vector aligned with
+all source rows. Supported by grouped overlays, intervals, statistics,
+and errors.}
+
+\item{x}{\code{NULL}, one numeric source-data column name, or a finite numeric
+vector aligned with all source rows. Used by intervals and
+errors. Errors default to posterior mean fitted responses.}
+
+\item{...}{Arguments passed to the selected plotting function. For \code{type = "error"}, they are passed to \code{\link[ggplot2:geom_point]{ggplot2::geom_point()}}.}
 }
 \value{
-A \code{ggplot} object produced by \code{bayesplot}.
+A \code{ggplot} object.
 }
 \description{
-Generates Gaussian replicated responses and delegates plotting to \code{bayesplot}.
-Only rows with observed responses are included. The suggested
-\code{bayesplot} package is required.
+Generates Gaussian replicated responses and produces predictive-check plots
+using \code{bayesplot} and \code{ggplot2}.
+Only observed rows are included. Pooled checks can be conditioned with
+grouping, predictive errors, test statistics, and PSIS-LOO calibration.
+}
+\details{
+Density overlays assume smooth continuous responses. Prefer an
+ECDF for rounded, censored, bounded, or point-mass responses. LOO-PIT uses
+simultaneous confidence bands; inspect \code{\link[loo:pareto_k_table]{loo::pareto_k_table()}} when warned.
 }

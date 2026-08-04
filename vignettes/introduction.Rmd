@@ -308,6 +308,11 @@ Systematic shifts between observed and replicated curves suggest a location
 mismatch. Different shapes or tails suggest that the latent structure or the
 Gaussian observation model misses important aspects of the data.
 
+These pooled overlays are only a first pass. See
+`vignette("model-checking", package = "batchieR")` for LOO-PIT calibration,
+grouped checks, predictive errors, test statistics, and guidance on interpreting
+diagnostic patterns.
+
 ## Rank candidate plates with PDBAL
 
 PDBAL compares posterior hypotheses over a user-defined `reference_grid`. Here
