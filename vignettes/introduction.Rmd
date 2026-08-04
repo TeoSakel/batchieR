@@ -1,0 +1,422 @@
+---
+title: "Introduction to batchieR"
+author: "Teo Sakel"
+date: "2026-08-04"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+    df_print: kable
+vignette: >
+  %\VignetteIndexEntry{Introduction to batchieR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+    collapse = TRUE,
+    comment = "#>",
+    fig.width = 7,
+    fig.height = 4.5
+)
+```
+
+## Introduction
+
+`batchieR` fits Bayesian latent-factor models to continuous responses from
+combination screens. It separates variation associated with cellular context,
+treatment main effects, and treatment interactions, and uses the fitted
+posterior to compare possible follow-up plates. This is useful when cells and
+compound-dose treatments recur across a screen and information can be shared
+across experiments.
+
+This vignette shows how to prepare the required experiment table, understand
+the default model, run a small fit, assess it with posterior predictive checks,
+predict on a reference response surface, and rank candidate plates with
+posterior-distance-based active learning (PDBAL).
+
+The package currently supports **only a Gaussian response with an identity link**.
+Binary, binomial, beta, count, and other non-Gaussian response families are not implemented.
+
+## Installation
+
+Install the current development version from GitHub:
+
+```{r install, eval=FALSE}
+remotes::install_github("TeoSakel/bathieR")
+```
+
+```{r load-package}
+library(batchieR)
+```
+
+## Model
+
+For an observed response involving cell $k$ and treatments $i$ and $j$,
+the current observation model is
+
+$$
+y_{kij} \mid \eta_{kij}, \tau \sim \mathcal{N}(\eta_{kij}, \tau^{-1}),
+$$
+
+where `gaussian_response()` specifies the observation precision $\tau$.
+The identity-link linear predictor is
+
+$$
+\eta_{kij} = \alpha + W_{0k} + V_{0i} + V_{0j}
+    + W_k^\top\left(V_{1i} + V_{1j} + V_{2i}\odot V_{2j}\right).
+$$
+
+| Model argument | Symbol | Dimension | Role |
+|:--|:--|:--|:--|
+| `global_intercept` | $\alpha$ | scalar | Overall response level |
+| `cell_offset` | $W_0$ | $K$ | Baseline differences among cells |
+| `cell_factors` | $W$ | $K \times d$ | Latent characteristics of cells |
+| `treatment_offset` | $V_0$ | $T$ | Treatment effects shared across cells |
+| `treatment_main_factors` | $V_1$ | $T \times d$ | Cell-dependent treatment main effects |
+| `treatment_interaction_factors` | $V_2$ | $T \times d$ | Cell-dependent nonadditive combination effects |
+
+Here $K$ is the number of cells, $T$ is the number of compound-dose treatment
+entities, and $d$ is the latent dimension selected by `rank`. The matrices
+$W$, $V_1$, and $V_2$ share this latent dimension.
+A single-treatment row has no second-treatment or interaction contribution.
+Exchanging the first and second treatment does not change the predictor.
+
+Raw latent coordinates have sign and permutation symmetries. Consequently,
+predictions and other identifiable response-scale summaries are generally more
+useful to interpret than individual factor coordinates.
+
+### Gaussian responses and transformations
+
+`gaussian_response(link = "identity")` is currently the only supported family and link.
+It models the numeric `response` column exactly as supplied. Applying `qlogis()`
+to viability does not turn this into a binomial or beta model: it is still a
+Gaussian model, now for continuous logit-viability values. Applying `plogis()`
+to posterior predictions is a transformation for interpretation; it does not
+create a beta or binomial posterior predictive distribution.
+
+## A small synthetic screen
+
+The example is the combination screen used by the package's adaptation
+demonstrations. It contains a monotherapy plate, three combination-training
+plates, a held-out combination plate, and two candidate combination plates.
+The responses come from fixed, visible rank-two parameters. They are
+illustrative ground truth, not draws from the priors in `combo_model()`.
+
+```{r synthetic-data}
+cells <- c("A", "B", "C")
+drugs <- c("X", "Y", "Z", "W")
+
+truth <- list(
+    alpha = 1.5,
+    cell_offset = c(A = 0.15, B = -0.10, C = 0),
+    cell_factors = matrix(
+        c(1, 0.2, 0.2, 1, 0.6, 0.6),
+        nrow = 3L,
+        byrow = TRUE,
+        dimnames = list(cells, NULL)
+    ),
+    treatment_offset = c(X = -0.45, Y = -0.55, Z = -0.40, W = -0.50),
+    treatment_main_factors = matrix(
+        c(-0.35, -0.05, -0.30, -0.05, -0.05, -0.35, -0.05, -0.30),
+        nrow = 4L,
+        byrow = TRUE,
+        dimnames = list(drugs, NULL)
+    ),
+    treatment_interaction_factors = matrix(
+        c(0.65, 0.05, -0.70, 0.05, 0.05, 0.65, 0.05, -0.70),
+        nrow = 4L,
+        byrow = TRUE,
+        dimnames = list(drugs, NULL)
+    )
+)
+
+single_rows <- expand.grid(
+    cell = cells,
+    drug_1 = drugs,
+    stringsAsFactors = FALSE
+)
+single_rows$drug_2 <- NA_character_
+single_rows$plate <- "1"
+
+known_pairs <- data.frame(
+    cell = c("A", "A", "B", "B"),
+    drug_1 = c("X", "Z", "X", "Z"),
+    drug_2 = c("Y", "W", "Y", "W"),
+    stringsAsFactors = FALSE
+)
+training_pairs <- do.call(rbind, lapply(2:4, function(plate_id) {
+    rows <- known_pairs
+    rows$plate <- as.character(plate_id)
+    rows
+}))
+holdout_pairs <- known_pairs
+holdout_pairs$plate <- "5"
+candidate_confirmatory <- data.frame(
+    cell = c("C", "C", "A", "B"),
+    drug_1 = c("X", "Z", "X", "Z"),
+    drug_2 = c("Y", "W", "Y", "W"),
+    plate = "6",
+    stringsAsFactors = FALSE
+)
+candidate_discovery <- data.frame(
+    cell = c("A", "A", "B", "B"),
+    drug_1 = c("X", "Y", "X", "Y"),
+    drug_2 = c("Z", "W", "W", "Z"),
+    plate = "7",
+    stringsAsFactors = FALSE
+)
+screen <- rbind(
+    single_rows[c("cell", "drug_1", "drug_2", "plate")],
+    training_pairs,
+    holdout_pairs,
+    candidate_confirmatory,
+    candidate_discovery
+)
+plate_roles <- c(
+    "1" = "training", "2" = "training", "3" = "training",
+    "4" = "training", "5" = "holdout", "6" = "candidate",
+    "7" = "candidate"
+)
+screen$role <- unname(plate_roles[screen$plate])
+screen$dose_1 <- 1
+screen$dose_2 <- ifelse(is.na(screen$drug_2), NA_real_, 1)
+
+linear_predictor <- function(cell, drug_1, drug_2) {
+    w <- truth$cell_factors[cell, ]
+    eta <- truth$alpha + truth$cell_offset[cell] +
+        truth$treatment_offset[drug_1] +
+        sum(w * truth$treatment_main_factors[drug_1, ])
+    if (!is.na(drug_2)) {
+        eta <- eta + truth$treatment_offset[drug_2] +
+            sum(w * truth$treatment_main_factors[drug_2, ]) +
+            sum(
+                w *
+                    truth$treatment_interaction_factors[drug_1, ] *
+                    truth$treatment_interaction_factors[drug_2, ]
+            )
+    }
+    unname(eta)
+}
+
+eta <- mapply(
+    linear_predictor,
+    screen$cell,
+    screen$drug_1,
+    screen$drug_2
+)
+set.seed(20260725L)
+screen$viability <- plogis(eta + stats::rnorm(nrow(screen), sd = 0.05))
+modeled_response <- qlogis(pmin(pmax(screen$viability, 0.01), 0.99))
+screen$response <- ifelse(screen$role == "training", modeled_response, NA_real_)
+
+experiments <- screen[c(
+    "cell", "drug_1", "dose_1", "drug_2", "dose_2", "response"
+)]
+screen[c(
+    "plate", "role", "cell", "drug_1", "dose_1", "drug_2",
+    "dose_2", "response"
+)]
+```
+
+The fitting data must contain `cell`, `drug_1`, `dose_1`, `drug_2`, `dose_2`,
+and numeric `response` columns. Plate and role are shown for organization but
+are not required by `fit_combo()`. A missing response keeps a holdout or
+candidate row available for prediction without adding it to the likelihood.
+For a single-treatment experiment, the drug and dose in the absent arm must
+both be `NA`; partially missing treatment arms are invalid. Clipping avoids the
+infinite logits produced by viability values of exactly zero or one.
+
+There are three distinct scales in this example:
+
+1. `viability` is bounded between zero and one.
+2. `response` is continuous logit viability and is what the Gaussian model sees.
+3. `plogis()` converts expected responses back to viability for interpretation
+   or for measuring PDBAL distances on that scale.
+
+## Specify and fit the default model
+
+```{r model-specification}
+model <- combo_model(rank = 2L)
+model
+```
+
+`combo_model()` assigns a `combo_gaussian_component()` to every model term.
+Each component separates four ideas:
+
+1. `mean` describes a feature-informed mean,
+2. `mean_shrinkage` regularizes its coefficients,
+3. `structure` gives the relative precision geometry among entities, and
+4. `shrinkage` controls deviations around the mean.
+
+The default components have zero means, so no metadata tables are needed here.
+
+The default `iid()` structure uses independent unit relative precision.
+`categorical()` treats each exact compound-dose pair as a separate treatment;
+it provides no dose ordering, interpolation, or automatic sharing between
+doses. The defaults implement the BATCHIE model as described in the
+[paper](https://doi.org/10.1038/s41467-024-55287-7) but with lower latent
+dimensionality (2 instead of 100):
+
+- the `cell_offset` uses gamma precision shrinkage,
+- `cell_factors` use multiplicative-gamma shrinkage
+- `treatment_offset`, `main_factors`, and `interaction_factors` use horseshoe shrinkage.
+- the `global_intercept` is the empirical mean of the observed responses,
+- the Gaussian *observation precision* has a gamma prior
+
+```{r fit-model}
+fit <- fit_combo(
+    model,
+    experiments,
+    chains = 2L,
+    iter_warmup = 25L,
+    iter_sampling = 25L,
+    thin = 1L,
+    seed = 20260804L
+)
+fit
+summary(fit)
+```
+
+Printing the `combo_fit` reports sampling dimensions and numbers of
+observations, cells, and compound-dose treatments. `summary()` reports
+posterior quantiles for sampler RMSE and observation precision. These values
+are useful basic summaries, but they are not convergence diagnostics.
+
+The deliberately short run keeps this vignette portable and executable. A
+substantive analysis should use longer chains and assess convergence and
+effective sample sizes before drawing scientific conclusions.
+
+## Posterior predictive checks
+
+Posterior predictive checks compare observed logit responses with responses
+replicated from the fitted Gaussian model. They use only rows with observed
+responses and stay on the scale supplied to `fit_combo()`.
+
+```{r pp-check-density, fig.alt="Density overlay of observed and posterior-predictive logit responses"}
+set.seed(20260804L)
+bayesplot::pp_check(fit, type = "dens_overlay", ndraws = 20L)
+```
+
+```{r pp-check-ecdf, fig.alt="ECDF overlay of observed and posterior-predictive logit responses"}
+set.seed(20260804L)
+bayesplot::pp_check(fit, type = "ecdf_overlay", ndraws = 20L)
+```
+
+Systematic shifts between observed and replicated curves suggest a location
+mismatch. Different shapes or tails suggest that the latent structure or the
+Gaussian observation model misses important aspects of the data.
+
+## Rank candidate plates with PDBAL
+
+PDBAL compares posterior hypotheses over a user-defined `reference_grid`. Here
+the grid contains every cell with all four single treatments and all six
+unordered treatment pairs, for 30 experiments in total.
+
+```{r reference-grid}
+single_configurations <- data.frame(
+    drug_1 = drugs,
+    drug_2 = NA_character_,
+    stringsAsFactors = FALSE
+)
+drug_pairs <- t(utils::combn(drugs, 2L))
+pair_configurations <- data.frame(
+    drug_1 = drug_pairs[, 1L],
+    drug_2 = drug_pairs[, 2L],
+    stringsAsFactors = FALSE
+)
+treatment_configurations <- rbind(
+    single_configurations,
+    pair_configurations
+)
+
+reference_grid <- merge(
+    data.frame(cell = cells),
+    treatment_configurations,
+    by = NULL
+)
+reference_grid$dose_1 <- 1
+reference_grid$dose_2 <- ifelse(is.na(reference_grid$drug_2), NA_real_, 1)
+reference_grid <- reference_grid[
+    c("cell", "drug_1", "dose_1", "drug_2", "dose_2")
+]
+```
+
+The reference grid is neither training data nor a prior. It identifies the
+response surface on which disagreement between posterior draws matters.
+Prediction and scoring data may rearrange fitted entities, but cannot introduce
+cells or compound-dose treatments absent from the fit. Under `categorical()`, a
+new dose of a known drug is also a new treatment entity.
+
+The two candidate plates come directly from the demonstration screen. Plate 6
+transfers the known `X/Y` and `Z/W` combinations partly into cell C, while
+plate 7 tests new cross-pair combinations in cells A and B. A third, deliberately
+redundant plate repeats one observed combination four times.
+
+```{r candidate-plates}
+candidate_row <- function(cell, drug_1, drug_2) {
+    data.frame(
+        cell = cell, drug_1 = drug_1, dose_1 = 1,
+        drug_2 = drug_2, dose_2 = 1,
+        stringsAsFactors = FALSE
+    )
+}
+
+prediction_columns <- c("cell", "drug_1", "dose_1", "drug_2", "dose_2")
+candidate_plates <- list(
+    confirmatory_plate_6 = screen[screen$plate == "6", prediction_columns],
+    discovery_plate_7 = screen[screen$plate == "7", prediction_columns],
+    redundant_replicates = do.call(
+        rbind,
+        replicate(
+            4L, candidate_row("A", "X", "Y"), simplify = FALSE
+        )
+    )
+)
+candidate_plates
+```
+
+```{r score-plates}
+set.seed(20260804L)
+plate_scores <- score_plate_pdbal(
+    fit,
+    candidate_data = candidate_plates,
+    reference_grid = reference_grid,
+    response_transform = plogis,
+    max_triplets = 1000L
+)
+plate_scores
+```
+
+`plate` is the candidate-list name, `n_experiments` is its row count, `score`
+is the ranking-equivalent log PDBAL objective, and `rank` orders plates from
+best to worst. Lower scores are preferred. Plate 7 is selected: its cross-pair
+combinations better distinguish posterior hypotheses across the reference surface than the confirmatory or redundant
+configurations.
+
+The `plogis` transformation applies only when distances between reference-grid
+posterior expectations are calculated. Candidate likelihoods and their overlap
+remain Gaussian on the fitted logit scale.
+
+## Limitations and next steps
+
+This introduction uses one dose, IID structures, fixed synthetic truth, and a
+short sampler run. Hierarchical and other prior adaptations are reserved for a
+follow-up vignette. The package also provides other posterior interfaces, but
+non-Gaussian response families and a public prior-predictive simulation
+interface are not currently available. See
+`?combo_model`, `?combo_gaussian_component`, `?fit_combo`,
+`?posterior_predictions`, and `?score_plate_pdbal` for API details.
+
+## References
+
+Tosh, C. et al. (2025). A Bayesian active learning platform for scalable
+combination drug screens. *Nature Communications*, 16, 156.
+doi: [10.1038/s41467-024-55287-7](https://doi.org/10.1038/s41467-024-55287-7).
+
+## Session information
+
+```{r session-information}
+sessionInfo()
+```

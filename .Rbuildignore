@@ -5,3 +5,6 @@
 ^LICENSE\.md$
 ^\.lintr$
 ^_dependencies\.R$
+^dev$
+^AGENTS\.md$
+^\.quarto$
