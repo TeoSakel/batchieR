@@ -1,5 +1,7 @@
 # Posterior draws and ecosystem integration for combo fits.
 
+utils::globalVariables(".data")
+
 # Prediction interface and workers ------------------------
 
 #' Posterior predictions for combination-response fits
@@ -774,7 +776,7 @@ combo_ppc_error_plot <- function(object, observed, yrep, x, group, stat, ...) {
     if (!is.null(group)) plot_data$group <- group
     plot <- ggplot2::ggplot(
         plot_data,
-        ggplot2::aes(x = plot_data[["x"]], y = plot_data[["error"]])
+        ggplot2::aes(x = .data[["x"]], y = .data[["error"]])
     ) +
         ggplot2::geom_hline(yintercept = 0, colour = "grey60", linetype = 2) +
         ggplot2::geom_point(...) +

@@ -222,7 +222,7 @@ test_that("extended posterior predictive checks integrate with bayesplot", {
         "dens_overlay", "ecdf_overlay", "intervals", "stat",
         "stat_2d", "error"
     )) {
-        plot <- suppressMessages(suppressWarnings(
+        plot <- expect_no_warning(suppressMessages(
             bayesplot::pp_check(fit, type = type)
         ))
         expect_s3_class(plot, "ggplot")
