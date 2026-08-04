@@ -19,13 +19,15 @@ License: GPL (>= 3)
 Encoding: UTF-8
 LazyData: true
 Imports:
+    cli,
     Matrix,
     matrixStats,
     methods
 Suggests:
-    bayesplot,
+    bayesplot (>= 1.13.0),
+    ggplot2,
     knitr,
-    loo,
+    loo (>= 2.0.0),
     posterior,
     remotes,
     rmarkdown,

@@ -140,3 +140,128 @@ test_that("loo and posterior predictive checks integrate with suggested packages
         expect_s3_class(plot, "ggplot")
     }
 })
+
+
+test_that("posterior predictive draw selection uses type-specific defaults", {
+    yrep <- matrix(seq_len(300), nrow = 100L)
+
+    set.seed(10L)
+    expect_identical(nrow(combo_ppc_draws(yrep, "dens_overlay", NULL)), 50L)
+    expect_identical(nrow(combo_ppc_draws(yrep, "ecdf_overlay", NULL)), 50L)
+    expect_identical(nrow(combo_ppc_draws(yrep, "intervals", NULL)), 100L)
+    expect_identical(nrow(combo_ppc_draws(yrep, "stat", 7L)), 7L)
+})
+
+test_that("posterior predictive selectors align to observed source rows", {
+    fit <- combo_test_fit()
+    observed <- combo_observed_data(fit)
+    group <- c("a", "a", "b", "b", NA, "b")
+
+    expect_identical(
+        combo_ppc_variable("cell", "group", observed),
+        fit$input$data$cell[fit$compiled$observed_rows]
+    )
+    expect_identical(
+        combo_ppc_variable(group, "group", observed),
+        group[fit$compiled$observed_rows]
+    )
+    expect_error(combo_ppc_variable("unknown", "group", observed), "not in")
+    expect_error(combo_ppc_variable(letters[1:2], "group", observed), "length 6")
+    expect_error(combo_ppc_variable("cell", "x", observed, numeric = TRUE), "numeric")
+})
+
+test_that("posterior predictive check options reject incompatible inputs", {
+    skip_if_not_installed("bayesplot", minimum_version = "1.13.0")
+    fit <- combo_test_fit()
+
+    expect_error(
+        bayesplot::pp_check(fit, type = "stat_2d", stat = "mean"),
+        "two statistics"
+    )
+    expect_error(
+        bayesplot::pp_check(fit, type = "stat", stat = c("mean", "sd")),
+        "one statistic"
+    )
+    expect_error(
+        bayesplot::pp_check(fit, type = "stat_2d", group = "cell"),
+        "group.*not supported"
+    )
+    expect_error(
+        bayesplot::pp_check(fit, type = "ecdf_overlay", x = "dose_1"),
+        "x.*only supported"
+    )
+    expect_error(
+        bayesplot::pp_check(fit, type = "loo_pit", ndraws = 2L),
+        "requires every retained draw"
+    )
+    expect_error(
+        bayesplot::pp_check(fit, type = "loo_pit", newdata = fit$input$data),
+        "only available for fitted observations"
+    )
+    expect_error(
+        suppressWarnings(bayesplot::pp_check(
+            fit, type = "error", stat = function(x) range(x)
+        )),
+        "one finite numeric"
+    )
+})
+
+test_that("density checks warn when repeated response mass can mislead", {
+    expect_warning(
+        combo_warn_ppc_density(c(0, 0, seq_len(20))),
+        "repeated values"
+    )
+    expect_no_warning(combo_warn_ppc_density(seq_len(20)))
+})
+
+test_that("extended posterior predictive checks integrate with bayesplot", {
+    skip_if_not_installed("bayesplot", minimum_version = "1.13.0")
+    fit <- combo_test_fit(iter_sampling = 10L, thin = 1L)
+
+    for (type in c(
+        "dens_overlay", "ecdf_overlay", "intervals", "stat",
+        "stat_2d", "error"
+    )) {
+        plot <- suppressMessages(suppressWarnings(
+            bayesplot::pp_check(fit, type = type)
+        ))
+        expect_s3_class(plot, "ggplot")
+    }
+
+    grouped <- list(
+        ecdf_overlay = list(group = "cell"),
+        intervals = list(group = "cell", x = "dose_1"),
+        stat = list(group = "cell", stat = "sd"),
+        error = list(group = "cell", x = "dose_1")
+    )
+    for (type in names(grouped)) {
+        plot <- suppressMessages(suppressWarnings(do.call(
+            bayesplot::pp_check,
+            c(list(object = fit, type = type), grouped[[type]])
+        )))
+        expect_s3_class(plot, "ggplot")
+    }
+})
+
+test_that("LOO-PIT values use aligned normalized importance weights", {
+    y <- c(0, 1)
+    yrep <- matrix(c(-1, 0, 1, 2, 0, 1, 2, 3), nrow = 4L)
+    weights <- matrix(0.25, nrow = 4L, ncol = 2L)
+
+    expect_equal(combo_loo_pit_values(y, yrep, weights), c(0.5, 0.5))
+    expect_error(
+        combo_loo_pit_values(y, yrep, weights[, 1L, drop = FALSE]),
+        "not aligned"
+    )
+})
+
+test_that("LOO-PIT returns a calibration plot", {
+    skip_if_not_installed("bayesplot", minimum_version = "1.13.0")
+    skip_if_not_installed("loo", minimum_version = "2.0.0")
+    fit <- combo_test_fit(iter_sampling = 10L, thin = 1L)
+
+    plot <- suppressMessages(suppressWarnings(
+        bayesplot::pp_check(fit, type = "loo_pit")
+    ))
+    expect_s3_class(plot, "ggplot")
+})

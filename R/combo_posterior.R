@@ -624,43 +624,224 @@ log_lik.combo_fit <- function(object, newdata = NULL, ...) {
 
 #' Posterior predictive checks for combination-response fits
 #'
-#' Generates Gaussian replicated responses and delegates plotting to `bayesplot`.
-#' Only rows with observed responses are included. The suggested
-#' `bayesplot` package is required.
+#' Generates Gaussian replicated responses and produces predictive-check plots
+#' using `bayesplot` and `ggplot2`.
+#' Only observed rows are included. Pooled checks can be conditioned with
+#' grouping, predictive errors, test statistics, and PSIS-LOO calibration.
 #'
 #' @param object A `combo_fit` object.
-#' @param type Check type: `"dens_overlay"`, `"ecdf_overlay"`, `"intervals"`, or `"stat"`.
-#' @param ndraws Positive number of posterior draws to plot, capped at the
-#'   number of retained draws.
-#' @param newdata Optional combination-screen data containing responses. When
-#'   `NULL`, the observed rows from the fitted input are used.
-#' @param stat Statistic passed to [bayesplot::ppc_stat()] when `type = "stat"`.
-#' @param ... Additional arguments passed to the selected `bayesplot` function.
-#' @return A `ggplot` object produced by `bayesplot`.
+#' @param type Check type: `"dens_overlay"`, `"ecdf_overlay"`, `"intervals"`,
+#'   `"stat"`, `"stat_2d"`, `"error"`, or `"loo_pit"`.
+#' @param ndraws `NULL`, or a positive number of posterior draws, capped at
+#'   the retained draws. By default overlays use at most 50 draws and other
+#'   non-LOO checks use all draws. LOO-PIT always uses all draws.
+#' @param newdata Optional data containing responses. LOO-PIT requires `NULL`
+#'   because it is only defined for observations used to fit the model.
+#' @param stat Statistic for statistic or error checks. `NULL` uses `"mean"`,
+#'   except `type = "stat_2d"` uses `c("mean", "sd")`.
+#' @param group `NULL`, one source-data column name, or a vector aligned with
+#'   all source rows. Supported by grouped overlays, intervals, statistics,
+#'   and errors.
+#' @param x `NULL`, one numeric source-data column name, or a finite numeric
+#'   vector aligned with all source rows. Used by intervals and
+#'   errors. Errors default to posterior mean fitted responses.
+#' @param ... Arguments passed to the selected plotting function. For `type = "error"`, they are passed to [ggplot2::geom_point()].
+#' @return A `ggplot` object.
+#' @details Density overlays assume smooth continuous responses. Prefer an
+#' ECDF for rounded, censored, bounded, or point-mass responses. LOO-PIT uses
+#' simultaneous confidence bands; inspect [loo::pareto_k_table()] when warned.
 #' @exportS3Method bayesplot::pp_check
 pp_check.combo_fit <- function(
     object,
-    type = c("dens_overlay", "ecdf_overlay", "intervals", "stat"),
-    ndraws = 50L,
+    type = c(
+        "dens_overlay", "ecdf_overlay", "intervals", "stat",
+        "stat_2d", "error", "loo_pit"
+    ),
+    ndraws = NULL,
     newdata = NULL,
-    stat = "mean",
+    stat = NULL,
+    group = NULL,
+    x = NULL,
     ...
 ) {
     if (!requireNamespace("bayesplot", quietly = TRUE)) {
-        stop("bayesplot is required for pp_check()", call. = FALSE)
+        cli::cli_abort("{.pkg bayesplot} is required for {.fn pp_check}.")
     }
     type <- match.arg(type)
-    ndraws <- param_positive_integer(ndraws, "ndraws")
+    combo_validate_ppc_options(type, ndraws, newdata, group, x)
     observed <- combo_observed_data(object, newdata)
+    group <- combo_ppc_variable(group, "group", observed)
+    x <- combo_ppc_variable(x, "x", observed, numeric = TRUE)
+
+    if (identical(type, "loo_pit")) {
+        return(combo_ppc_loo_pit(object, observed, ...))
+    }
+
     yrep <- posterior_predict(object, newdata = observed$data)
-    selected <- sample.int(nrow(yrep), min(ndraws, nrow(yrep)), replace = FALSE)
-    yrep <- yrep[selected, , drop = FALSE]
+    yrep <- combo_ppc_draws(yrep, type, ndraws)
+    y <- observed$response
+    if (identical(type, "dens_overlay")) combo_warn_ppc_density(y)
+    if (is.null(stat)) {
+        stat <- if (identical(type, "stat_2d")) c("mean", "sd") else "mean"
+    }
+    if (identical(type, "stat") && length(stat) != 1L) {
+        cli::cli_abort("{.arg stat} must contain one statistic for {.val stat} checks.")
+    }
+    if (identical(type, "stat_2d") && length(stat) != 2L) {
+        cli::cli_abort("{.arg stat} must contain two statistics for {.val stat_2d} checks.")
+    }
+
+    if (identical(type, "error")) {
+        return(combo_ppc_error_plot(object, observed, yrep, x, group, stat, ...))
+    }
+
+    if (!is.null(group)) {
+        return(switch(
+            type,
+            dens_overlay = bayesplot::ppc_dens_overlay_grouped(y, yrep, group, ...),
+            ecdf_overlay = bayesplot::ppc_ecdf_overlay_grouped(y, yrep, group, ...),
+            intervals = bayesplot::ppc_intervals_grouped(y, yrep, x, group, ...),
+            stat = bayesplot::ppc_stat_grouped(y, yrep, group, stat = stat, ...)
+        ))
+    }
+
     switch(
         type,
-        dens_overlay = bayesplot::ppc_dens_overlay(observed$response, yrep, ...),
-        ecdf_overlay = bayesplot::ppc_ecdf_overlay(observed$response, yrep, ...),
-        intervals = bayesplot::ppc_intervals(observed$response, yrep, ...),
-        stat = bayesplot::ppc_stat(observed$response, yrep, stat = stat, ...)
+        dens_overlay = bayesplot::ppc_dens_overlay(y, yrep, ...),
+        ecdf_overlay = bayesplot::ppc_ecdf_overlay(y, yrep, ...),
+        intervals = bayesplot::ppc_intervals(y, yrep, x = x, ...),
+        stat = bayesplot::ppc_stat(y, yrep, stat = stat, ...),
+        stat_2d = bayesplot::ppc_stat_2d(y, yrep, stat = stat, ...)
+    )
+}
+
+combo_validate_ppc_options <- function(type, ndraws, newdata, group, x) {
+    if (!is.null(ndraws)) param_positive_integer(ndraws, "ndraws")
+    if (identical(type, "loo_pit")) {
+        if (!is.null(newdata)) {
+            cli::cli_abort("LOO-PIT is only available for fitted observations; {.arg newdata} must be {.code NULL}.")
+        }
+        if (!is.null(ndraws)) {
+            cli::cli_abort("LOO-PIT requires every retained draw; {.arg ndraws} must be {.code NULL}.")
+        }
+    }
+    grouped_types <- c("dens_overlay", "ecdf_overlay", "intervals", "stat", "error")
+    if (!is.null(group) && !type %in% grouped_types) {
+        cli::cli_abort("{.arg group} is not supported for a {.val {type}} check.")
+    }
+    if (!is.null(x) && !type %in% c("intervals", "error")) {
+        cli::cli_abort("{.arg x} is only supported for interval and error checks.")
+    }
+    invisible(NULL)
+}
+
+combo_ppc_variable <- function(value, name, observed, numeric = FALSE) {
+    if (is.null(value)) return(NULL)
+    if (is.character(value) && length(value) == 1L) {
+        if (!value %in% names(observed$data)) {
+            cli::cli_abort("Column {.field {value}} supplied to {.arg {name}} is not in the checking data.")
+        }
+        value <- observed$data[[value]]
+    } else {
+        if (length(value) != observed$n_rows) {
+            cli::cli_abort("{.arg {name}} must name one column or have length {observed$n_rows}.")
+        }
+        value <- value[observed$row_id]
+    }
+    if (anyNA(value)) {
+        cli::cli_abort("{.arg {name}} must not contain missing values on observed rows.")
+    }
+    if (numeric && (!is.numeric(value) || any(!is.finite(value)))) {
+        cli::cli_abort("{.arg {name}} must resolve to finite numeric values.")
+    }
+    value
+}
+
+combo_ppc_error_plot <- function(object, observed, yrep, x, group, stat, ...) {
+    stat_fn <- match.fun(stat)
+    error <- vapply(seq_along(observed$response), function(index) {
+        value <- stat_fn(observed$response[index] - yrep[, index])
+        if (!is.numeric(value) || length(value) != 1L || !is.finite(value)) {
+            cli::cli_abort("{.arg stat} must return one finite numeric predictive-error summary.")
+        }
+        value
+    }, numeric(1))
+    default_x <- is.null(x)
+    if (default_x) {
+        x <- colMeans(posterior_epred(object, newdata = observed$data))
+    }
+    plot_data <- data.frame(x = x, error = error)
+    if (!is.null(group)) plot_data$group <- group
+    plot <- ggplot2::ggplot(
+        plot_data,
+        ggplot2::aes(x = plot_data[["x"]], y = plot_data[["error"]])
+    ) +
+        ggplot2::geom_hline(yintercept = 0, colour = "grey60", linetype = 2) +
+        ggplot2::geom_point(...) +
+        ggplot2::labs(
+            x = if (default_x) "Posterior mean fitted response" else "Checking variable",
+            y = "Posterior predictive error"
+        )
+    if (!is.null(group)) {
+        plot <- plot + ggplot2::facet_wrap(stats::as.formula("~ group"))
+    }
+    plot
+}
+
+combo_ppc_draws <- function(yrep, type, ndraws) {
+    target <- if (is.null(ndraws)) {
+        if (type %in% c("dens_overlay", "ecdf_overlay")) 50L else nrow(yrep)
+    } else {
+        param_positive_integer(ndraws, "ndraws")
+    }
+    target <- min(target, nrow(yrep))
+    if (target == nrow(yrep)) return(yrep)
+    yrep[sample.int(nrow(yrep), target, replace = FALSE), , drop = FALSE]
+}
+
+combo_warn_ppc_density <- function(y) {
+    counts <- table(y)
+    if (length(counts) && max(counts) > 1L && max(counts) / length(y) > 0.02) {
+        cli::cli_warn(c(
+            "The response contains repeated values with more than 2% empirical mass.",
+            "i" = "A density overlay can hide rounding, censoring, or point masses; also inspect an ECDF overlay."
+        ))
+    }
+    invisible(NULL)
+}
+
+combo_loo_pit_values <- function(y, yrep, weights) {
+    if (!identical(dim(yrep), dim(weights)) || ncol(yrep) != length(y)) {
+        stop("Internal LOO-PIT inputs are not aligned", call. = FALSE)
+    }
+    indicators <- sweep(yrep, 2L, y, FUN = "<=")
+    colSums(weights * indicators)
+}
+
+combo_ppc_loo_pit <- function(object, observed, ...) {
+    if (!requireNamespace("loo", quietly = TRUE)) {
+        cli::cli_abort("{.pkg loo} is required for a LOO-PIT check.")
+    }
+    pointwise <- log_lik(object)
+    r_eff <- loo::relative_eff(exp(pointwise), chain_id = object$chain_id)
+    loo_result <- loo::loo(pointwise, r_eff = r_eff, save_psis = TRUE)
+    k_table <- loo::pareto_k_table(loo_result)
+    threshold <- attr(k_table, "k_threshold")
+    bad <- sum(loo::pareto_k_values(loo_result) > threshold, na.rm = TRUE)
+    if (bad) {
+        cli::cli_warn(c(
+            "{bad} observation{?s} exceed{?s/} the Pareto-k reliability threshold ({format(threshold, digits = 2)}).",
+            "i" = "Inspect {.code loo::pareto_k_table(loo::loo(fit))}; the LOO-PIT approximation may be unreliable."
+        ))
+    }
+    yrep <- posterior_predict(object, newdata = observed$data)
+    dots <- list(...)
+    if (is.null(dots$plot_diff)) dots$plot_diff <- TRUE
+    weights <- stats::weights(loo_result$psis_object, normalize = TRUE, log = FALSE)
+    pit <- combo_loo_pit_values(observed$response, yrep, weights)
+    do.call(
+        bayesplot::ppc_loo_pit_ecdf,
+        c(list(pit = pit), dots)
     )
 }
 
@@ -726,7 +907,8 @@ combo_observed_data <- function(object, newdata = NULL) {
             list(
                 data = data[observed_rows, , drop = FALSE],
                 response = response,
-                row_id = observed_rows
+                row_id = observed_rows,
+                n_rows = nrow(data)
             )
         ))
     }
@@ -738,7 +920,8 @@ combo_observed_data <- function(object, newdata = NULL) {
     list(
         data = parsed$data[observed, , drop = FALSE],
         response = parsed$response[observed],
-        row_id = observed
+        row_id = observed,
+        n_rows = nrow(parsed$data)
     )
 }
 
