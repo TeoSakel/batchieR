@@ -2,7 +2,7 @@
 
 init_gibbs_state <- function(compiled) {
     if (!inherits(compiled, "compiled_combo_model")) {
-        stop("compiled must be a compiled_combo_model", call. = FALSE)
+        cli::cli_abort("compiled must be a compiled_combo_model")
     }
     components <- lapply(compiled$components, init_component_state)
     structure(

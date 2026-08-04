@@ -55,7 +55,7 @@ posterior_epred <- function(object, ...) {
 posterior_epred.combo_fit <- function(object, newdata = NULL, ...) {
     link <- object$model$family$link
     if (!identical(link, "identity")) {
-        stop("No inverse-link implementation is available for ", link, call. = FALSE)
+        cli::cli_abort("No inverse-link implementation is available for {link}")
     }
     posterior_linpred(object, newdata = newdata, ...)
 }
@@ -93,7 +93,7 @@ predict.combo_fit <- function(
 ) {
     type <- match.arg(type)
     if (!is.logical(observation) || length(observation) != 1L || is.na(observation)) {
-        stop("observation must be TRUE or FALSE", call. = FALSE)
+        cli::cli_abort("observation must be TRUE or FALSE")
     }
     predictions <- if (isTRUE(observation)) {
         posterior_predict(object, newdata = newdata, ...)
@@ -166,20 +166,15 @@ combo_prediction_indices <- function(fit, newdata) {
         parsed$key_2[is.na(treatment_2) & !is.na(parsed$key_2)]
     ))
     if (length(unseen_cells) || length(unseen_treatments)) {
-        details <- c(
+        cli::cli_abort(c(
+            "newdata contains entities absent from the fitted mappings:",
             if (length(unseen_cells)) {
-                paste0("cells: ", paste(unseen_cells, collapse = ", "))
+                "*" = "cells: {.and {unseen_cells}}"
             },
             if (length(unseen_treatments)) {
-                paste0(
-                    "treatments: ",
-                    paste(unseen_treatments, collapse = ", ")
-                )
+                "*" = "treatments: {.and {unseen_treatments}}"
             }
-        )
-        stop("newdata contains entities absent from the fitted mappings (",
-            paste(details, collapse = "; "), ")", call. = FALSE
-        )
+        ))
     }
     list(
         cell = cell,
@@ -255,7 +250,7 @@ posterior_draws <- function(
     validate_combo_fit(fit)
     include <- match.arg(include)
     if (!is.null(components) && !is.null(variable)) {
-        stop("components and variable are mutually exclusive", call. = FALSE)
+        cli::cli_abort("components and variable are mutually exclusive")
     }
     draws <- combo_draws_array(fit, include)
     map <- parameter_map(fit, include)
@@ -264,16 +259,16 @@ posterior_draws <- function(
         valid <- names(fit$model$components)
         unknown <- setdiff(components, valid)
         if (length(unknown)) {
-            stop("Unknown components: ", paste(unknown, collapse = ", "), call. = FALSE)
+            cli::cli_abort("Unknown components: {.and {unknown}}")
         }
         selected <- map$variable[map$component %in% components]
         if (!length(selected)) {
-            stop("Selected components have no posterior variables", call. = FALSE)
+            cli::cli_abort("Selected components have no posterior variables")
         }
     } else if (!is.null(variable)) {
         unknown <- setdiff(variable, map$variable)
         if (length(unknown)) {
-            stop("Unknown variables: ", paste(unknown, collapse = ", "), call. = FALSE)
+            cli::cli_abort("Unknown variables: {.and {unknown}}")
         }
         selected <- variable
     }
@@ -286,7 +281,7 @@ combo_draws_array <- function(fit, include) {
         nbins = max(fit$chain_id)
     )
     if (!length(chain_sizes) || any(chain_sizes != chain_sizes[1L])) {
-        stop("combo_fit contains unbalanced posterior chains", call. = FALSE)
+        cli::cli_abort("combo_fit contains unbalanced posterior chains")
     }
     flattened <- lapply(
         seq_along(fit$draws),
@@ -306,7 +301,7 @@ combo_draws_array <- function(fit, include) {
         logical(1)
     )
     if (!all(consistent)) {
-        stop("Posterior snapshots do not share a stable variable schema", call. = FALSE)
+        cli::cli_abort("Posterior snapshots do not share a stable variable schema")
     }
     values <- array(
         NA_real_,
@@ -466,7 +461,7 @@ parameter_map <- function(fit, include = c("public", "all")) {
     rownames(result) <- NULL
     expected <- names(combo_flatten_snapshot(fit, snapshot, 1L, include))
     if (!identical(result$variable, expected)) {
-        stop("Internal posterior variable map is inconsistent", call. = FALSE)
+        cli::cli_abort("Internal posterior variable map is inconsistent")
     }
     result
 }
@@ -814,7 +809,7 @@ combo_warn_ppc_density <- function(y) {
 
 combo_loo_pit_values <- function(y, yrep, weights) {
     if (!identical(dim(yrep), dim(weights)) || ncol(yrep) != length(y)) {
-        stop("Internal LOO-PIT inputs are not aligned", call. = FALSE)
+        cli::cli_abort("Internal LOO-PIT inputs are not aligned")
     }
     indicators <- sweep(yrep, 2L, y, FUN = "<=")
     colSums(weights * indicators)
@@ -891,7 +886,7 @@ combo_ppc_loo_pit <- function(object, observed, ...) {
 #' @exportS3Method loo::loo
 loo.combo_fit <- function(x, newdata = NULL, ..., r_eff = NULL) {
     if (!requireNamespace("loo", quietly = TRUE)) {
-        stop("loo is required for loo()", call. = FALSE)
+        cli::cli_abort("loo is required for loo()")
     }
     pointwise <- log_lik(x, newdata = newdata)
     if (is.null(r_eff)) {
@@ -917,7 +912,7 @@ combo_observed_data <- function(object, newdata = NULL) {
     parsed <- validate_experiments(newdata)
     observed <- which(!is.na(parsed$response))
     if (!length(observed)) {
-        stop("newdata contains no observed responses", call. = FALSE)
+        cli::cli_abort("newdata contains no observed responses")
     }
     list(
         data = parsed$data[observed, , drop = FALSE],
@@ -931,7 +926,7 @@ combo_observed_data <- function(object, newdata = NULL) {
 
 validate_combo_fit <- function(fit) {
     if (!inherits(fit, "combo_fit")) {
-        stop("fit must be a combo_fit", call. = FALSE)
+        cli::cli_abort("fit must be a combo_fit")
     }
     invisible(fit)
 }

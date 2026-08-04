@@ -25,6 +25,21 @@ test_that("clip supports elementwise lower bounds", {
     )
     expect_error(
         clip(1, lower = c(0, 2), upper = 1),
-        "lower must be less than or equal to upper"
+        "lower must be less than or equal to upper",
+        class = "rlang_error"
     )
+})
+
+test_that("numerical fallback reports a cli warning", {
+    expect_warning(
+        value <- rmvnorm_safe(
+            matrix(-1, nrow = 1L),
+            mu_part = 0,
+            fallback = 7,
+            label = "test precision"
+        ),
+        "Numerical instability in test precision",
+        class = "rlang_warning"
+    )
+    expect_identical(value, 7)
 })

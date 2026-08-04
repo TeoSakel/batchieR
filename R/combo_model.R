@@ -76,15 +76,13 @@ combo_model <- function(
 ) {
     rank <- param_positive_integer(rank, "rank")
     if (!inherits(global_intercept, "param_intercept")) {
-        stop("global_intercept must be empirical_intercept() or ",
-            "fixed_intercept()", call. = FALSE
-        )
+        cli::cli_abort("global_intercept must be empirical_intercept() or fixed_intercept()")
     }
     if (!inherits(dose, "combo_dose")) {
-        stop("dose must be categorical() or nested()", call. = FALSE)
+        cli::cli_abort("dose must be categorical() or nested()")
     }
     if (!inherits(family, "combo_family")) {
-        stop("family must be a supported family specification", call. = FALSE)
+        cli::cli_abort("family must be a supported family specification")
     }
     components <- list(
         cell_offset = cell_offset,
@@ -118,23 +116,18 @@ combo_model <- function(
             logical(1)
         )]
         if (length(incompatible)) {
-            stop(
-                "nested() creates a non-IID treatment structure and cannot ",
-                "use entity-local half-Cauchy shrinkage in: ",
-                paste(incompatible, collapse = ", "),
-                call. = FALSE
+            cli::cli_abort(
+                "nested() creates a non-IID treatment structure and cannot use entity-local half-Cauchy shrinkage in: {.and {incompatible}}"
             )
         }
     }
     factors_active <- !is.null(treatment_main_factors) ||
         !is.null(treatment_interaction_factors)
     if (factors_active && is.null(cell_factors)) {
-        stop("treatment factor components require cell_factors", call. = FALSE)
+        cli::cli_abort("treatment factor components require cell_factors")
     }
     if (!is.null(cell_factors) && !factors_active) {
-        stop("cell_factors contributes nothing unless a treatment factor ",
-            "component is active", call. = FALSE
-        )
+        cli::cli_abort("cell_factors contributes nothing unless a treatment factor component is active")
     }
     structure(
         list(
@@ -154,35 +147,36 @@ combo_model <- function(
 #' @rdname combo_model
 #' @export
 print.combo_model <- function(x, ...) {
-    cat("<combo_model>\n")
-    cat("  family: Gaussian(identity)\n")
-    cat("  rank:", x$rank, "\n")
+    output <- cli::cli_format_method({
+    cli::cli_text("<combo_model>")
+    cli::cli_text("family: Gaussian(identity)")
+    cli::cli_text("rank: {x[['rank']]}")
     intercept <- if (x$global_intercept$type == "empirical") {
         "empirical observed-response mean"
     } else {
         format(x$global_intercept$value)
     }
-    cat("  global_intercept:", intercept, "\n")
-    dose <- if (x$dose$type == "categorical") {
-        "categorical"
+    cli::cli_text("global_intercept: {intercept}")
+    if (x$dose$type == "categorical") {
+        cli::cli_text("dose: categorical")
     } else {
-        paste0("nested (relative precision ", x$dose$precision, ")")
+        cli::cli_text("dose: nested (relative precision {x[['dose']][['precision']]})")
     }
-    cat("  dose:", dose, "\n")
-    cat("  components:\n")
+    cli::cli_text("components:")
     for (name in names(x$components)) {
         component <- x$components[[name]]
         if (is.null(component)) {
-            cat("   -", name, ": disabled\n")
+            cli::cli_text("- {name}: disabled")
             next
         }
-        mean_label <- paste(deparse(component$mean), collapse = " ")
-        cat(
-            "   -", name, ": mean", mean_label,
-            "| structure", structure_type(component$structure),
-            "| shrinkage", component$shrinkage$type, "\n"
+        structure <- structure_type(component[["structure"]])
+        shrinkage <- component[["shrinkage"]][["type"]]
+        cli::cli_text(
+            "- {name}: mean {deparse(component[['mean']])} | structure {structure} | shrinkage {shrinkage}"
         )
     }
+    })
+    writeLines(output)
     invisible(x)
 }
 
@@ -224,13 +218,13 @@ combo_gaussian_component <- function(
     structure = NULL
 ) {
     if (!inherits(mean, "formula") || length(mean) != 2L) {
-        stop("mean must be a one-sided formula", call. = FALSE)
+        cli::cli_abort("mean must be a one-sided formula")
     }
     if (missing(shrinkage) || !inherits(shrinkage, "param_shrinkage")) {
-        stop("shrinkage must be an explicit shrinkage specification", call. = FALSE)
+        cli::cli_abort("shrinkage must be an explicit shrinkage specification")
     }
     if (!is.null(mean_shrinkage) && !inherits(mean_shrinkage, "param_shrinkage")) {
-        stop("mean_shrinkage must be NULL or a shrinkage specification", call. = FALSE)
+        cli::cli_abort("mean_shrinkage must be NULL or a shrinkage specification")
     }
     if (is.null(structure)) {
         # iid() is defined with the structural-prior code. A small independent
@@ -238,7 +232,7 @@ combo_gaussian_component <- function(
         structure <- structure(list(type = "iid"), class = "structural_prior")
     }
     if (!is_structure_spec(structure)) {
-        stop("structure must be iid(), tree(), precision(), or gmrf()", call. = FALSE)
+        cli::cli_abort("structure must be iid(), tree(), precision(), or gmrf()")
     }
     structure(
         list(
@@ -256,38 +250,34 @@ validate_component <- function(component, name, kind) {
         return(invisible(NULL))
     }
     if (!inherits(component, "combo_component")) {
-        stop(name, " must be NULL or a combo_gaussian_component()", call. = FALSE)
+        cli::cli_abort("{name} must be NULL or a combo_gaussian_component()")
     }
     formula_terms <- stats::terms(component$mean)
     if (attr(formula_terms, "intercept") != 0L) {
-        stop(name, " mean formula must omit the intercept (use ~ 0 + ...)", call. = FALSE)
+        cli::cli_abort("{name} mean formula must omit the intercept (use ~ 0 + ...)")
     }
     has_mean <- !formula_is_zero(component$mean)
     if (has_mean && kind != "offset") {
-        msg <- sprintf(
-            "Nonzero mean formulas are supported only for offset components; %s must use ~ 0",
-            name
-        )
-        stop(msg, call. = FALSE)  # TODO: this should be relaxed to a warning.
+        cli::cli_abort(
+            "Nonzero mean formulas are supported only for offset components; {name} must use ~ 0"
+        )  # TODO: this should be relaxed to a warning.
     }
     if (has_mean && is.null(component$mean_shrinkage)) {
         # TODO: this could be relaxed to a warning, with a default mean_shrinkage applied.
-        stop(name, " requires mean_shrinkage when its mean has predictors", call. = FALSE)
+        cli::cli_abort("{name} requires mean_shrinkage when its mean has predictors")
     }
     if (!has_mean && !is.null(component$mean_shrinkage)) {
         # TODO: this could be relaxed to a warning, with mean_shrinkage ignored.
-        stop(name, " must omit mean_shrinkage when mean is ~ 0", call. = FALSE)
+        cli::cli_abort("{name} must omit mean_shrinkage when mean is ~ 0")
     }
     if (has_mean && !component$mean_shrinkage$type %in% c("fixed", "gamma")) {
-        msg <- paste(
-            name,
-            "mean_shrinkage must be fixed_scale() or gamma_precision() when mean has predictors"
+        cli::cli_abort(
+            "{name} mean_shrinkage must be fixed_scale() or gamma_precision() when mean has predictors"
         )
-        stop(msg, call. = FALSE)
     }
     q_type <- structure_type(component$structure)
     if (!q_type %in% c("iid", "tree", "precision", "gmrf")) {
-        stop(name, " uses an unsupported structure: ", q_type, call. = FALSE)
+        cli::cli_abort("{name} uses an unsupported structure: {q_type}")
     }
     shrinkage_type <- component$shrinkage$type
     allowed <- c(
@@ -295,14 +285,15 @@ validate_component <- function(component, name, kind) {
         "horseshoe", "multiplicative_gamma"
     )
     if (!shrinkage_type %in% allowed) {
-        stop(name, " uses unsupported shrinkage: ", shrinkage_type, call. = FALSE)
+        cli::cli_abort("{name} uses unsupported shrinkage: {shrinkage_type}")
     }
     if (kind == "offset" && shrinkage_type == "multiplicative_gamma") {
-        stop(name, " is scalar and cannot use multiplicative_gamma()", call. = FALSE)
+        cli::cli_abort("{name} is scalar and cannot use multiplicative_gamma()")
     }
     if (q_type != "iid" && shrinkage_type %in% c("local_half_cauchy", "horseshoe")) {
-        msg <- paste(name, "uses a non-IID structure and cannot use entity-local shrinkage")
-        stop(msg, call. = FALSE)
+        cli::cli_abort(
+            "{name} uses a non-IID structure and cannot use entity-local shrinkage"
+        )
     }
     invisible(component)
 }
@@ -315,7 +306,7 @@ is_structure_spec <- function(x) {
 
 structure_type <- function(x) {
     if (!is_structure_spec(x) || is.null(x$type)) {
-        stop("Invalid component structure", call. = FALSE)
+        cli::cli_abort("Invalid component structure")
     }
     as.character(x$type)
 }
@@ -502,10 +493,10 @@ gaussian_response <- function(
     precision = gamma_precision(shape = 1.1, rate = 1.1)
 ) {
     if (length(link) != 1L || !identical(as.character(link), "identity")) {
-        stop("The Gibbs engine currently supports only the identity link", call. = FALSE)
+        cli::cli_abort("The Gibbs engine currently supports only the identity link")
     }
     if (!inherits(precision, "param_shrinkage") || !identical(precision$type, "gamma")) {
-        stop("Gaussian observation precision must use gamma_precision()", call. = FALSE)
+        cli::cli_abort("Gaussian observation precision must use gamma_precision()")
     }
     structure(
         list(name = "gaussian", link = "identity", precision = precision),
@@ -535,7 +526,7 @@ empirical_intercept <- function() {
 #' @export
 fixed_intercept <- function(value) {
     if (length(value) != 1L || is.na(value) || !is.finite(value)) {
-        stop("value must be one finite number", call. = FALSE)
+        cli::cli_abort("value must be one finite number")
     }
     structure(
         list(type = "fixed", value = as.numeric(value)),

@@ -56,34 +56,28 @@ fit_combo <- function(
     control = list()
 ) {
     if (length(engine) != 1L || !identical(engine, "gibbs")) {
-        stop("engine must be \"gibbs\"", call. = FALSE)
+        cli::cli_abort("engine must be \"gibbs\"")
     }
     run_values <- c(chains, iter_warmup, iter_sampling, thin)
     if (anyNA(run_values) || any(!is.finite(run_values)) ||
             chains < 1 || iter_warmup < 0 || iter_sampling < thin || thin < 1 ||
             any(run_values != as.integer(run_values))) {
-        msg <- paste(
-            "chains, iter_warmup, iter_sampling, and thin must be",
-            "integer-valued and within their allowed ranges"
+        cli::cli_abort(
+            "chains, iter_warmup, iter_sampling, and thin must be integer-valued and within their allowed ranges"
         )
-        stop(msg, call. = FALSE)
     }
     if (!is.null(seed) && (!is_positive_integer(seed))) {
-        stop("seed must be NULL or one finite integer", call. = FALSE)
+        cli::cli_abort("seed must be NULL or one finite integer")
     }
     if (!is.list(control)) {
-        stop("control must be a named list", call. = FALSE)
+        cli::cli_abort("control must be a named list")
     }
     if (length(control)) {
         labels <- names(control)
         if (is.null(labels) || any(!nzchar(labels))) {
-            stop("control must be a named list", call. = FALSE)
+            cli::cli_abort("control must be a named list")
         }
-        msg <- paste(
-            "Unused Gibbs control parameter(s):",
-            paste(labels, collapse = ", ")
-        )
-        stop(msg, call. = FALSE)
+        cli::cli_abort("Unused Gibbs control parameter(s): {.and {labels}}")
     }
     chains <- as.integer(chains)
     iter_warmup <- as.integer(iter_warmup)
@@ -165,20 +159,22 @@ NULL
 #' @rdname combo_fit_methods
 #' @export
 print.combo_fit <- function(x, ...) {
-    cat("<combo_fit>\n")
-    cat("  engine:", x$engine, "\n")
-    cat("  chains:", x$sampling$chains, "\n")
-    cat("  iterations:",
-        x$sampling$iter_warmup + x$sampling$iter_sampling,
-        "per chain\n"
+    output <- cli::cli_format_method({
+    cli::cli_text("<combo_fit>")
+    cli::cli_text("engine: {x[['engine']]}")
+    cli::cli_text("chains: {x[['sampling']][['chains']]}")
+    cli::cli_text(
+        "iterations: {x[['sampling']][['iter_warmup']] + x[['sampling']][['iter_sampling']]} per chain"
     )
-    cat("  warmup:", x$sampling$iter_warmup, "\n")
-    cat("  sampling:", x$sampling$iter_sampling, "\n")
-    cat("  thin:", x$sampling$thin, "\n")
-    cat("  retained draws:", length(x$draws), "\n")
-    cat("  observations:", length(x$compiled$observed_rows), "\n")
-    cat("  cells:", length(x$compiled$cells), "\n")
-    cat("  treatments:", nrow(x$compiled$treatments), "\n")
+    cli::cli_text("warmup: {x[['sampling']][['iter_warmup']]}")
+    cli::cli_text("sampling: {x[['sampling']][['iter_sampling']]}")
+    cli::cli_text("thin: {x[['sampling']][['thin']]}")
+    cli::cli_text("retained draws: {length(x[['draws']])}")
+    cli::cli_text("observations: {length(x[['compiled']][['observed_rows']])}")
+    cli::cli_text("cells: {length(x[['compiled']][['cells']])}")
+    cli::cli_text("treatments: {nrow(x[['compiled']][['treatments']])}")
+    })
+    writeLines(output)
     invisible(x)
 }
 
@@ -214,13 +210,17 @@ summary.combo_fit <- function(object, ...) {
 #' @rdname combo_fit_methods
 #' @export
 print.summary.combo_fit <- function(x, ...) {
-    cat("Combination-model Gibbs fit\n")
-    cat("  engine:", x$engine, "\n")
-    cat("  observations:", x$n_observed, "\n")
-    cat("  cells:", x$n_cells, "\n")
-    cat("  treatments:", x$n_treatments, "\n")
-    cat("  draws:", x$n_draws, "\n")
-    cat("  RMSE (5%, 50%, 95%):",
-        paste(format(x$rmse, digits = 4), collapse = ", "), "\n")
+    output <- cli::cli_format_method({
+    cli::cli_text("Combination-model Gibbs fit")
+    cli::cli_text("engine: {x[['engine']]}")
+    cli::cli_text("observations: {x[['n_observed']]}")
+    cli::cli_text("cells: {x[['n_cells']]}")
+    cli::cli_text("treatments: {x[['n_treatments']]}")
+    cli::cli_text("draws: {x[['n_draws']]}")
+    cli::cli_text(
+        "RMSE (5%, 50%, 95%): {format(x[['rmse']], digits = 4)}"
+    )
+    })
+    writeLines(output)
     invisible(x)
 }

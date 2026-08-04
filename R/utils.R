@@ -16,7 +16,7 @@ is_invalid_key <- function(x) {
 
 param_scalar_positive <- function(x, label) {
     if (length(x) != 1L || is.na(x) || !is.finite(x) || x <= 0) {
-        stop(label, " must be one finite positive number", call. = FALSE)
+        cli::cli_abort("{label} must be one finite positive number")
     }
     as.numeric(x)
 }
@@ -27,7 +27,7 @@ is_positive_integer <- function(x) {
 
 param_positive_integer <- function(x, label) {
     if (!is_positive_integer(x)) {
-        stop(label, " must be one positive integer", call. = FALSE)
+        cli::cli_abort("{label} must be one positive integer")
     }
     as.integer(x)
 }
@@ -44,7 +44,7 @@ formula_is_zero <- function(formula) {
 
 clip <- function(x, lower = -Inf, upper = Inf) {
     if (any(lower > upper)) {
-        stop("lower must be less than or equal to upper")
+        cli::cli_abort("lower must be less than or equal to upper")
     }
     pmax(pmin(x, upper), lower)  # keep shape of x
 }
@@ -62,10 +62,7 @@ rmvnorm_safe <- function(precision, mu_part, fallback, label) {
     tryCatch(
         batchieR_rmvnorm(precision, mu_part),
         error = function(error) {
-            warning("Numerical instability in ", label, "; retaining previous value: ",
-                conditionMessage(error),
-                call. = FALSE
-            )
+            cli::cli_warn("Numerical instability in {label}; retaining previous value: {conditionMessage(error)}")
             fallback
         }
     )

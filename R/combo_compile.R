@@ -22,14 +22,14 @@ combo_id_text <- function(x) {
 
 treatment_key <- function(drug, dose) {
     if (length(drug) != length(dose)) {
-        stop("drug and dose must have the same length", call. = FALSE)
+        cli::cli_abort("drug and dose must have the same length")
     }
     drug <- combo_id_text(drug)
     dose <- combo_id_text(dose)
     missing_pair <- is.na(drug) & is.na(dose)
     partial <- xor(is.na(drug), is.na(dose))
     if (any(partial)) {
-        stop("Drug and dose must be jointly present or jointly missing", call. = FALSE)
+        cli::cli_abort("Drug and dose must be jointly present or jointly missing")
     }
     result <- paste0(nchar(drug), ":", drug, "|", nchar(dose), ":", dose)
     result[missing_pair] <- NA_character_
@@ -38,7 +38,7 @@ treatment_key <- function(drug, dose) {
 
 validate_experiments <- function(data, require_response = TRUE) {
     if (!inherits(data, "data.frame")) {
-        stop("data must be a data frame", call. = FALSE)
+        cli::cli_abort("data must be a data frame")
     }
     # Required columns
     required <- c("cell", "drug_1", "dose_1", "drug_2", "dose_2")
@@ -47,8 +47,7 @@ validate_experiments <- function(data, require_response = TRUE) {
     }
     missing <- setdiff(required, names(data))
     if (length(missing)) {
-        msg <- paste("data is missing required columns:", paste(missing, collapse = ", "))
-        stop(msg, call. = FALSE)
+        cli::cli_abort("data is missing required columns: {.and {missing}}")
     }
     # Response
     if (!"response" %in% names(data)) {
@@ -57,17 +56,17 @@ validate_experiments <- function(data, require_response = TRUE) {
     if (!is.numeric(data$response) && all(is.na(data$response))) {
         response <- rep(NA_real_, length(data$response))
     } else if (!is.numeric(data$response)) {
-        stop("response must be numeric", call. = FALSE)
+        cli::cli_abort("response must be numeric")
     } else {
         response <- as.numeric(data$response)
     }
     if (any(!is.finite(response[!is.na(response)]))) {
-        stop("Nonmissing responses must be finite numeric values", call. = FALSE)
+        cli::cli_abort("Nonmissing responses must be finite numeric values")
     }
 
     cell <- combo_id_text(data$cell)
     if (anyNA(cell) || any(!nzchar(cell))) {
-        stop("cell values must be nonmissing and nonempty", call. = FALSE)
+        cli::cli_abort("cell values must be nonmissing and nonempty")
     }
 
     list(
@@ -90,14 +89,14 @@ combo_metadata_by_key <- function(data, key, values, label) {
         return(base)
     }
     if (!inherits(data, "data.frame")) {
-        stop(label, " must be a data frame", call. = FALSE)
+        cli::cli_abort("{label} must be a data frame")
     }
     if (!key %in% names(data)) {
-        stop(label, " must contain key column ", key, call. = FALSE)
+        cli::cli_abort("{label} must contain key column {key}")
     }
     metadata_key <- combo_id_text(data[[key]])
     if (is_invalid_key(metadata_key)) {
-        stop(label, " key ", key, " must be nonmissing and unique", call. = FALSE)
+        cli::cli_abort("{label} key {key} must be nonmissing and unique")
     }
     data[[key]] <- metadata_key
     result <- merge(base, data, by = key, all.x = TRUE, sort = FALSE)
@@ -119,17 +118,15 @@ combo_treatment_metadata <- function(treatments, compound_data) {
         return(base)
     }
     if (!inherits(compound_data, "data.frame") || !"drug" %in% names(compound_data)) {
-        stop("compound_data must be a data frame containing drug", call. = FALSE)
+        cli::cli_abort("compound_data must be a data frame containing drug")
     }
     compound_key <- combo_id_text(compound_data$drug)
     if (is_invalid_key(compound_key)) {
-        stop("compound_data drug keys must be nonmissing and unique", call. = FALSE)
+        cli::cli_abort("compound_data drug keys must be nonmissing and unique")
     }
     reserved <- intersect(setdiff(names(compound_data), "drug"), names(base))
     if (length(reserved)) {
-        stop("compound_data uses reserved columns: ",
-            paste(reserved, collapse = ", "), call. = FALSE
-        )
+        cli::cli_abort("compound_data uses reserved columns: {.and {reserved}}")
     }
     selected <- match(treatments$drug, compound_key)
     for (name in setdiff(names(compound_data), "drug")) {
@@ -163,19 +160,18 @@ combo_compile_mean <- function(component, metadata, label) {
             na.action = stats::na.pass
         ),
         error = function(error) {
-            stop(
-                label, " mean formula could not be evaluated: ",
-                conditionMessage(error), call. = FALSE
+            cli::cli_abort(
+                "{label} mean formula could not be evaluated: {conditionMessage(error)}"
             )
         }
     )
     X <- stats::model.matrix(component$mean, data = frame)
     if ("(Intercept)" %in% colnames(X)) {
-        stop(label, " mean formula may not contain an intercept", call. = FALSE)
+        cli::cli_abort("{label} mean formula may not contain an intercept")
     }
     storage.mode(X) <- "double"
     if (any(!is.finite(X))) {
-        stop(label, " mean design matrix contains missing or nonfinite values", call. = FALSE)
+        cli::cli_abort("{label} mean design matrix contains missing or nonfinite values")
     }
     # Center and scale the design matrix
     center <- colMeans(X)
@@ -183,11 +179,9 @@ combo_compile_mean <- function(component, metadata, label) {
     scale <- apply(centered, 2L, stats::sd)
     if (any(!is.finite(scale)) || any(scale <= 0)) {
         bad <- colnames(X)[!is.finite(scale) | scale <= 0] # Columns with zero variance
-        msg <- sprintf(
-            "%s mean design contains constant columns: %s",
-            label, paste(bad, collapse = ", ")
+        cli::cli_abort(
+            "{label} mean design contains constant columns: {.and {bad}}"
         )
-        stop(msg, call. = FALSE)
     }
     X <- sweep(centered, 2L, scale, `/`)
     names(center) <- colnames(X)
@@ -204,22 +198,20 @@ combo_compile_mean <- function(component, metadata, label) {
 
 align_structure_matrix <- function(Q, entity_names, label, source) {
     if (!methods::is(Q, "sparseMatrix")) {
-        stop(label, " ", source, " must be a Matrix sparse matrix", call. = FALSE)
+        cli::cli_abort("{label} {source} must be a Matrix sparse matrix")
     }
     row_names <- rownames(Q)
     column_names <- colnames(Q)
     valid_names <- !is.null(row_names) && !is.null(column_names) &&
         !is_invalid_key(row_names) && identical(row_names, column_names)
     if (!valid_names) {
-        stop(label, " ", source,
-            " must have identical unique row and column names", call. = FALSE
+        cli::cli_abort(
+            "{label} {source} must have identical unique row and column names"
         )
     }
     if (length(row_names) != length(entity_names) ||
             !setequal(row_names, entity_names)) {
-        stop(label, " ", source,
-            " names must exactly match modeled entities", call. = FALSE
-        )
+        cli::cli_abort("{label} {source} names must exactly match modeled entities")
     }
     Q[entity_names, entity_names, drop = FALSE]
 }
@@ -260,33 +252,30 @@ construct_structure <- function(spec, entity_names, label) {
     if (type == "tree") {
         return(construct_tree_precision(spec, entity_names, label))
     }
-    stop("Unsupported structure type: ", type, call. = FALSE)
+    cli::cli_abort("Unsupported structure type: {type}")
 }
 
 validate_precision <- function(construction, label) {
     Q <- construction$Q
     if (!methods::is(Q, "sparseMatrix")) {
-        stop(label, " precision must be a Matrix sparse matrix", call. = FALSE)
+        cli::cli_abort("{label} precision must be a Matrix sparse matrix")
     }
     row_names <- rownames(Q)
     column_names <- colnames(Q)
     valid_names <- !is.null(row_names) && !is.null(column_names) &&
         !is_invalid_key(row_names) && identical(row_names, column_names)
     if (nrow(Q) < 1L || !valid_names || !Matrix::isSymmetric(Q, checkDN = TRUE, tol = 0)) {
-        stop(label,
-            " precision must be a non-empty exactly symmetric matrix with valid names",
-            call. = FALSE
-        )
+        cli::cli_abort("{label} precision must be a non-empty exactly symmetric matrix with valid names")
     }
     if (!all(is.finite(sparse_values(Q)))) {
-        stop(label, " precision entries must be finite", call. = FALSE)
+        cli::cli_abort("{label} precision entries must be finite")
     }
 
     entity_names <- construction$entity_names
     modeled_index <- construction$modeled_index
     modeled_scale <- construction$modeled_scale
     if (is_invalid_key(entity_names)) {
-        stop(label, " modeled entity names must be unique and non-empty", call. = FALSE)
+        cli::cli_abort("{label} modeled entity names must be unique and non-empty")
     }
     valid_index <- length(modeled_index) == length(entity_names) &&
         !anyNA(modeled_index) &&
@@ -294,13 +283,13 @@ validate_precision <- function(construction, label) {
         all(modeled_index >= 1L & modeled_index <= nrow(Q)) &&
         !anyDuplicated(modeled_index)
     if (!valid_index) {
-        stop(label, " modeled indices must be unique valid matrix rows", call. = FALSE)
+        cli::cli_abort("{label} modeled indices must be unique valid matrix rows")
     }
     valid_scale <- length(modeled_scale) == length(entity_names) &&
         is.numeric(modeled_scale) && all(is.finite(modeled_scale)) &&
         all(modeled_scale > 0)
     if (!valid_scale) {
-        stop(label, " modeled scales must be finite positive numbers", call. = FALSE)
+        cli::cli_abort("{label} modeled scales must be finite positive numbers")
     }
 
     Q <- Matrix::drop0(Q)
@@ -313,13 +302,13 @@ validate_precision <- function(construction, label) {
             perm = TRUE
         ),
         warning = function(warning) {
-            stop(label, " precision must be positive definite: ",
-                conditionMessage(warning), call. = FALSE
+            cli::cli_abort(
+                "{label} precision must be positive definite: {conditionMessage(warning)}"
             )
         },
         error = function(error) {
-            stop(label, " precision must be positive definite: ",
-                conditionMessage(error), call. = FALSE
+            cli::cli_abort(
+                "{label} precision must be positive definite: {conditionMessage(error)}"
             )
         }
     )
@@ -459,11 +448,9 @@ combo_compile_component <- function(
             if (length(value) == 1L) {
                 shrinkage[[parameter]] <- rep(value, n_dimensions)
             } else if (length(value) != n_dimensions) {
-                msg <- sprintf(
-                    "%s multiplicative_gamma() %s must have length 1 or match rank (%d)",
-                    name, parameter, n_dimensions
+                cli::cli_abort(
+                    "{name} multiplicative_gamma() {parameter} must have length 1 or match rank ({n_dimensions})"
                 )
-                stop(msg, call. = FALSE)
             }
         }
     }
@@ -486,12 +473,12 @@ compile_combo_model <- function(
     compound_data = NULL
 ) {
     if (!inherits(model, "combo_model")) {
-        stop("model must be constructed by combo_model()", call. = FALSE)
+        cli::cli_abort("model must be constructed by combo_model()")
     }
     parsed <- validate_experiments(data)
     observed <- which(!is.na(parsed$response))
     if (!length(observed)) {
-        stop("fit_combo requires at least one observed response", call. = FALSE)
+        cli::cli_abort("fit_combo requires at least one observed response")
     }
     cells <- unique(parsed$cell)
     all_treatment_keys <- c(parsed$key_1, parsed$key_2)
@@ -529,9 +516,7 @@ compile_combo_model <- function(
     self <- treatment_index_1[observed] > 0L &
         treatment_index_1[observed] == treatment_index_2[observed]
     if (active_v2 && any(self)) {
-        stop("Observed self-combinations are not conditionally Gaussian for ",
-            "treatment_interaction_factors", call. = FALSE
-        )
+        cli::cli_abort("Observed self-combinations are not conditionally Gaussian for treatment_interaction_factors")
     }
 
     specs <- list(

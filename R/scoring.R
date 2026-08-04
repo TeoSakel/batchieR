@@ -125,17 +125,15 @@ score_plate_pdbal <- function(
     validate_combo_fit(fit)
     if (!identical(fit$model$family$name, "gaussian") ||
             !identical(fit$model$family$link, "identity")) {
-        stop(
-            "score_plate_pdbal() requires a Gaussian identity-link fit",
-            call. = FALSE
+        cli::cli_abort(
+            "score_plate_pdbal() requires a Gaussian identity-link fit"
         )
     }
     if (!is.list(candidate_data) || !length(candidate_data) ||
             is.null(names(candidate_data)) ||
             is_invalid_key(names(candidate_data))) {
-        stop(
-            "candidate_data must be a non-empty, uniquely named list",
-            call. = FALSE
+        cli::cli_abort(
+            "candidate_data must be a non-empty, uniquely named list"
         )
     }
     invisible(lapply(
@@ -145,20 +143,18 @@ score_plate_pdbal <- function(
     ))
     validate_scoring_data(reference_grid, "reference_grid")
     if (!is.function(response_transform)) {
-        stop("response_transform must be a function", call. = FALSE)
+        cli::cli_abort("response_transform must be a function")
     }
     if (is.character(distance)) {
         if (length(distance) != 1L || is.na(distance) ||
                 !identical(distance, "mean_squared_error")) {
-            stop(
-                'distance must be "mean_squared_error" or a function',
-                call. = FALSE
+            cli::cli_abort(
+                'distance must be "mean_squared_error" or a function'
             )
         }
     } else if (!is.function(distance)) {
-        stop(
-            'distance must be "mean_squared_error" or a function',
-            call. = FALSE
+        cli::cli_abort(
+            'distance must be "mean_squared_error" or a function'
         )
     }
     max_triplets <- param_positive_integer(max_triplets, "max_triplets")
@@ -170,9 +166,8 @@ score_plate_pdbal <- function(
             !is.numeric(transformed_predictions) ||
             !identical(dim(transformed_predictions), dim(reference_predictions)) ||
             any(!is.finite(transformed_predictions))) {
-        stop(
-            "response_transform must return a finite numeric matrix with unchanged dimensions",
-            call. = FALSE
+        cli::cli_abort(
+            "response_transform must return a finite numeric matrix with unchanged dimensions"
         )
     }
     distance_matrix <- if (is.character(distance)) {
@@ -196,9 +191,8 @@ score_plate_pdbal <- function(
     precisions <- as.numeric(precision_draws[, , "observation_precision"])
     if (length(precisions) != nrow(reference_predictions) ||
             any(!is.finite(precisions)) || any(precisions <= 0)) {
-        stop(
-            "All posterior observation precisions must be finite and positive",
-            call. = FALSE
+        cli::cli_abort(
+            "All posterior observation precisions must be finite and positive"
         )
     }
     variances_by_plate <- lapply(
@@ -237,16 +231,14 @@ pdbal_gaussian_scores <- function(means_by_plate, variances_by_plate,
     if (!is.list(means_by_plate) || !length(means_by_plate) ||
             is.null(names(means_by_plate)) ||
             is_invalid_key(names(means_by_plate))) {
-        stop(
-            "means_by_plate must be a non-empty, uniquely named list",
-            call. = FALSE
+        cli::cli_abort(
+            "means_by_plate must be a non-empty, uniquely named list"
         )
     }
     if (!is.list(variances_by_plate) ||
             !identical(names(variances_by_plate), names(means_by_plate))) {
-        stop(
-            "variances_by_plate must have the same names as means_by_plate",
-            call. = FALSE
+        cli::cli_abort(
+            "variances_by_plate must have the same names as means_by_plate"
         )
     }
     max_triplets <- param_positive_integer(max_triplets, "max_triplets")
@@ -255,10 +247,10 @@ pdbal_gaussian_scores <- function(means_by_plate, variances_by_plate,
     distance_matrix <- as.matrix(distance_matrix)
     if (!is.numeric(distance_matrix) ||
             nrow(distance_matrix) != ncol(distance_matrix)) {
-        stop("distance_matrix must be a square numeric matrix", call. = FALSE)
+        cli::cli_abort("distance_matrix must be a square numeric matrix")
     }
     if (nrow(distance_matrix) < 3L) {
-        stop("PDBAL requires at least three posterior draws", call. = FALSE)
+        cli::cli_abort("PDBAL requires at least three posterior draws")
     }
     distance_matrix <- validate_distance_matrix(
         distance_matrix,
@@ -272,16 +264,14 @@ pdbal_gaussian_scores <- function(means_by_plate, variances_by_plate,
         if (!is.numeric(means) || !is.numeric(variances) ||
                 !identical(dim(means), dim(variances)) ||
                 nrow(means) != n_draws || ncol(means) < 1L) {
-            stop(
-                "Each mean and variance matrix must have matching draw-by-experiment dimensions",
-                call. = FALSE
+            cli::cli_abort(
+                "Each mean and variance matrix must have matching draw-by-experiment dimensions"
             )
         }
         if (any(!is.finite(means)) || any(!is.finite(variances)) ||
                 any(variances <= 0)) {
-            stop(
-                "Plate means must be finite and variances must be finite and positive",
-                call. = FALSE
+            cli::cli_abort(
+                "Plate means must be finite and variances must be finite and positive"
             )
         }
         means_by_plate[[plate_name]] <- means
@@ -345,7 +335,7 @@ draw_triplets <- function(n_draws, max_triplets = 5000L) {
     n_draws <- param_positive_integer(n_draws, "n_draws")
     max_triplets <- param_positive_integer(max_triplets, "max_triplets")
     if (n_draws < 3L) {
-        stop("PDBAL requires at least three posterior draws", call. = FALSE)
+        cli::cli_abort("PDBAL requires at least three posterior draws")
     }
 
     n_possible <- choose(n_draws, 3L)
@@ -390,9 +380,8 @@ validate_prediction_matrix <- function(predictions) {
     if (!is.matrix(predictions) || !is.numeric(predictions) ||
             nrow(predictions) < 1L || ncol(predictions) < 1L ||
             any(!is.finite(predictions))) {
-        stop(
-            "predictions must be a finite numeric matrix with at least one row and column",
-            call. = FALSE
+        cli::cli_abort(
+            "predictions must be a finite numeric matrix with at least one row and column"
         )
     }
     predictions
@@ -403,13 +392,12 @@ validate_distance_matrix <- function(distance_matrix, n_draws, tolerance = 1e-10
     if (!is.numeric(distance_matrix) ||
             !identical(dim(distance_matrix), c(n_draws, n_draws)) ||
             any(!is.finite(distance_matrix))) {
-        stop(
-            "distance must return a finite numeric draw-by-draw matrix",
-            call. = FALSE
+        cli::cli_abort(
+            "distance must return a finite numeric draw-by-draw matrix"
         )
     }
     if (any(distance_matrix < -tolerance)) {
-        stop("distance matrix must be non-negative", call. = FALSE)
+        cli::cli_abort("distance matrix must be non-negative")
     }
     if (!isTRUE(all.equal(
         distance_matrix,
@@ -417,10 +405,10 @@ validate_distance_matrix <- function(distance_matrix, n_draws, tolerance = 1e-10
         tolerance = tolerance,
         check.attributes = FALSE
     ))) {
-        stop("distance matrix must be symmetric", call. = FALSE)
+        cli::cli_abort("distance matrix must be symmetric")
     }
     if (any(abs(diag(distance_matrix)) > tolerance)) {
-        stop("distance matrix must have a zero diagonal", call. = FALSE)
+        cli::cli_abort("distance matrix must have a zero diagonal")
     }
     distance_matrix <- pmax(distance_matrix, 0)
     diag(distance_matrix) <- 0
@@ -429,7 +417,7 @@ validate_distance_matrix <- function(distance_matrix, n_draws, tolerance = 1e-10
 
 validate_scoring_data <- function(data, label) {
     if (!inherits(data, "data.frame") || nrow(data) < 1L) {
-        stop(label, " must be a data frame with at least one row", call. = FALSE)
+        cli::cli_abort("{label} must be a data frame with at least one row")
     }
     validate_experiments(data, require_response = FALSE)
     invisible(data)

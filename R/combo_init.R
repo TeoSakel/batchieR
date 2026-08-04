@@ -25,7 +25,7 @@ init_shrinkage <- function(spec, n_entities, n_dimensions) {
         result[["global"]] <- rep(100, n_dimensions)
         result[["delta"]] <- rep(1, n_dimensions)
     } else {
-        stop("Unsupported shrinkage state: ", type, call. = FALSE)
+        cli::cli_abort("Unsupported shrinkage state: {type}")
     }
     result
 }

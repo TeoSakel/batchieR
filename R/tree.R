@@ -3,7 +3,7 @@
 tree <- function(node, parent, data, edge_length = 1) {
     data <- eval(substitute(data), envir = parent.frame())
     if (!inherits(data, "data.frame")) {
-        stop("tree data must be a data frame", call. = FALSE)
+        cli::cli_abort("tree data must be a data frame")
     }
     nodes <- tree_column(substitute(node), data, "node")
     parents <- tree_column(substitute(parent), data, "parent")
@@ -30,11 +30,11 @@ tree <- function(node, parent, data, edge_length = 1) {
 
 tree_column <- function(expression, data, label) {
     if (!is.symbol(expression)) {
-        stop(label, " must name a column in data", call. = FALSE)
+        cli::cli_abort("{label} must name a column in data")
     }
     column_name <- as.character(expression)
     if (!column_name %in% names(data)) {
-        stop(label, " column is absent from data: ", column_name, call. = FALSE)
+        cli::cli_abort("{label} column is absent from data: {column_name}")
     }
     data[[column_name]]
 }
@@ -101,7 +101,7 @@ derive_tree <- function(tree_spec, modeled_index) {
     }
 
     if (anyDuplicated(modeled_index)) {
-        stop("Each modeled parameter must map to a distinct tree leaf", call. = FALSE)
+        cli::cli_abort("Each modeled parameter must map to a distinct tree leaf")
     }
     structure(
         c(
@@ -130,27 +130,26 @@ validate_tree <- function(prior, entity_names, label) {
     }
 
     if (is_invalid_key(nodes)) {
-        stop(label, " tree nodes must be unique non-empty strings", call. = FALSE)
+        cli::cli_abort("{label} tree nodes must be unique non-empty strings")
     }
     if (length(parents) != length(nodes)) {
-        stop(label, " tree parent column must have one value per node", call. = FALSE)
+        cli::cli_abort("{label} tree parent column must have one value per node")
     }
     if (length(edge_lengths) != length(nodes) ||
             any(!is.finite(edge_lengths)) || any(edge_lengths <= 0)) {
-        stop(label, " tree edge lengths must be finite and positive", call. = FALSE)
+        cli::cli_abort("{label} tree edge lengths must be finite and positive")
     }
 
     parent_index <- match(parents, nodes)
     invalid_parent <- !is.na(parents) & is.na(parent_index)
     if (any(invalid_parent)) {
-        stop(label, " tree contains parents absent from its node column: ",
-            paste(unique(parents[invalid_parent]), collapse = ", "),
-            call. = FALSE
+        cli::cli_abort(
+            "{label} tree contains parents absent from its node column: {.and {unique(parents[invalid_parent])}}"
         )
     }
     parent_index[is.na(parent_index)] <- 0L
     if (any(parent_index == seq_along(nodes))) {
-        stop(label, " tree nodes may not be their own parent", call. = FALSE)
+        cli::cli_abort("{label} tree nodes may not be their own parent")
     }
 
     seen <- logical(length(nodes))
@@ -159,7 +158,7 @@ validate_tree <- function(prior, entity_names, label) {
         current <- start
         while (current != 0L) {
             if (seen[current]) {
-                stop(label, " tree contains a cycle", call. = FALSE)
+                cli::cli_abort("{label} tree contains a cycle")
             }
             seen[current] <- TRUE
             current <- parent_index[current]
@@ -175,17 +174,15 @@ validate_tree <- function(prior, entity_names, label) {
 
     missing_entities <- setdiff(entity_names, nodes)
     if (length(missing_entities)) {
-        stop(label, " tree is missing modeled entities: ",
-            paste(missing_entities, collapse = ", "),
-            call. = FALSE
+        cli::cli_abort(
+            "{label} tree is missing modeled entities: {.and {missing_entities}}"
         )
     }
     entity_index <- match(entity_names, nodes)
     nonterminal_entities <- entity_names[has_children[entity_index]]
     if (length(nonterminal_entities)) {
-        stop(label, " modeled entities must be terminal tree nodes: ",
-            paste(nonterminal_entities, collapse = ", "),
-            call. = FALSE
+        cli::cli_abort(
+            "{label} modeled entities must be terminal tree nodes: {.and {nonterminal_entities}}"
         )
     }
 
