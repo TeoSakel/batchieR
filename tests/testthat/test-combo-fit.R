@@ -15,7 +15,9 @@ test_that("model and component specifications form the public fit contract", {
     expect_s3_class(fixed_intercept(0), "param_intercept")
     expect_s3_class(categorical(), "combo_dose")
     expect_s3_class(nested(), "combo_dose")
-    expect_s3_class(gaussian(), "combo_family")
+    expect_s3_class(gaussian_response(), "combo_family")
+    expect_true("gaussian_response" %in% getNamespaceExports("batchieR"))
+    expect_false("gaussian" %in% getNamespaceExports("batchieR"))
     expect_output(print(model), "<combo_model>", fixed = TRUE)
 })
 

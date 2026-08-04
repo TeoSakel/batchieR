@@ -36,7 +36,7 @@ horseshoe global and entity-local standard-deviation multipliers.}
 }
 \value{
 A shrinkage specification for \code{\link[=combo_gaussian_component]{combo_gaussian_component()}} or
-\code{\link[=gaussian]{gaussian()}}.
+\code{\link[=gaussian_response]{gaussian_response()}}.
 }
 \description{
 Configure the prior scale of Gaussian component deviations or metadata-mean

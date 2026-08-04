@@ -19,8 +19,8 @@ combo_model(
   treatment_interaction_factors = combo_gaussian_component(shrinkage =
     horseshoe(global_scale = 1, local_scale = 1)),
   dose = categorical(),
-  family = gaussian(link = "identity", precision = gamma_precision(shape = 1.1, rate =
-    1.1))
+  family = gaussian_response(link = "identity", precision = gamma_precision(shape = 1.1,
+    rate = 1.1))
 )
 
 \method{print}{combo_model}(x, ...)
@@ -47,7 +47,7 @@ nonadditive effects (\code{V2}), or \code{NULL}.}
 
 \item{dose}{Treatment-dose relationship; see \link{dose_specifications}.}
 
-\item{family}{Response distribution and link; see \code{\link[=gaussian]{gaussian()}}.}
+\item{family}{Response distribution and link; see \code{\link[=gaussian_response]{gaussian_response()}}.}
 
 \item{x}{A \code{combo_model} object.}
 
@@ -86,7 +86,7 @@ removes its term; treatment factor terms require \code{cell_factors}.
 
 See \code{\link[=combo_gaussian_component]{combo_gaussian_component()}} for configuring each component. The remaining model
 specifications are described in \link{intercept_specifications},
-\link{dose_specifications}, and \code{\link[=gaussian]{gaussian()}}.
+\link{dose_specifications}, and \code{\link[=gaussian_response]{gaussian_response()}}.
 }
 \examples{
 model <- combo_model(rank = 2L)

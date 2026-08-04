@@ -28,7 +28,7 @@
 #'
 #' See [combo_gaussian_component()] for configuring each component. The remaining model
 #' specifications are described in [intercept_specifications],
-#' [dose_specifications], and [gaussian()].
+#' [dose_specifications], and [gaussian_response()].
 #'
 #' @param rank Positive integer shared latent dimension of `cell_factors`,
 #'   `treatment_main_factors`, and `treatment_interaction_factors`.
@@ -43,7 +43,7 @@
 #' @param treatment_interaction_factors Component for context-specific
 #'   nonadditive effects (`V2`), or `NULL`.
 #' @param dose Treatment-dose relationship; see [dose_specifications].
-#' @param family Response distribution and link; see [gaussian()].
+#' @param family Response distribution and link; see [gaussian_response()].
 #' @return A `combo_model` specification consumed by [fit_combo()].
 #' @examples
 #' model <- combo_model(rank = 2L)
@@ -69,7 +69,7 @@ combo_model <- function(
         shrinkage = horseshoe(global_scale = 1, local_scale = 1)
     ),
     dose = categorical(),
-    family = gaussian(
+    family = gaussian_response(
         link = "identity",
         precision = gamma_precision(shape = 1.1, rate = 1.1)
     )
@@ -427,7 +427,7 @@ param_shrinkage <- function(type, ...) {
 #' @param global_scale,local_scale Positive half-Cauchy scales for the
 #'   horseshoe global and entity-local standard-deviation multipliers.
 #' @return A shrinkage specification for [combo_gaussian_component()] or
-#'   [gaussian()].
+#'   [gaussian_response()].
 #' @name shrinkage_specifications
 NULL
 
@@ -497,7 +497,10 @@ multiplicative_gamma <- function(shape = 2, rate = 1) {
 #'   precision.
 #' @return A `combo_family` specification for [combo_model()].
 #' @export
-gaussian <- function(link = "identity", precision = gamma_precision(shape = 1.1, rate = 1.1)) {
+gaussian_response <- function(
+    link = "identity",
+    precision = gamma_precision(shape = 1.1, rate = 1.1)
+) {
     if (length(link) != 1L || !identical(as.character(link), "identity")) {
         stop("The Gibbs engine currently supports only the identity link", call. = FALSE)
     }
