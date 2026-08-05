@@ -15,6 +15,9 @@
 #' `iter_sampling` transitions and retains every `thin`th state, for
 #' `floor(iter_sampling / thin)` draws per chain.
 #'
+#' Chains are evaluated as independent futures. Seeded fits use parallel-safe
+#' random-number streams and produce the same draws for any worker count.
+#'
 #' @param model A combination-model specification created by `combo_model()`.
 #' @param data A data frame of combination-screen observations. See Details for
 #'   the required columns.
@@ -36,6 +39,13 @@
 #' @param control Named list of engine-specific control parameters. The Gibbs
 #'   engine currently supports no additional control parameters, so this must
 #'   be empty.
+#' @param parallel_chains Maximum number of chains to run concurrently. Must be
+#'   a positive integer and is capped at `chains`. Values greater than one
+#'   use independent multisession workers. The default follows the `mc.cores`
+#'   option.
+#' @param refresh Nonnegative integer controlling how often each chain reports
+#'   sampling progress through `progressr`. Set to `0` to disable progress
+#'   output.
 #'
 #' @return A `combo_fit` object containing the original and compiled model,
 #'   retained Gibbs-state snapshots in `draws`, chain and iteration indices,
@@ -53,18 +63,24 @@ fit_combo <- function(
     iter_sampling = 1000L,
     thin = 1L,
     seed = NULL,
-    control = list()
+    control = list(),
+    parallel_chains = getOption("mc.cores", 1L),
+    refresh = max((iter_warmup + iter_sampling) %/% 10L, 1L)
 ) {
     if (length(engine) != 1L || !identical(engine, "gibbs")) {
         cli::cli_abort("engine must be \"gibbs\"")
     }
-    run_values <- c(chains, iter_warmup, iter_sampling, thin)
-    if (anyNA(run_values) || any(!is.finite(run_values)) ||
-            chains < 1 || iter_warmup < 0 || iter_sampling < thin || thin < 1 ||
-            any(run_values != as.integer(run_values))) {
-        cli::cli_abort(
-            "chains, iter_warmup, iter_sampling, and thin must be integer-valued and within their allowed ranges"
-        )
+    if (!is_positive_integer(chains)) {
+        cli::cli_abort("chains must be integer-valued and at least 1")
+    }
+    if (!is_nonnegative_integer(iter_warmup)) {
+        cli::cli_abort("iter_warmup must be integer-valued and at least 0")
+    }
+    if (!is_positive_integer(thin)) {
+        cli::cli_abort("thin must be integer-valued and at least 1")
+    }
+    if (!is_positive_integer(iter_sampling) || iter_sampling < thin) {
+        cli::cli_abort("iter_sampling must be integer-valued and at least thin")
     }
     if (!is.null(seed) && (!is_positive_integer(seed))) {
         cli::cli_abort("seed must be NULL or one finite integer")
@@ -79,40 +95,43 @@ fit_combo <- function(
         }
         cli::cli_abort("Unused Gibbs control parameter(s): {.and {labels}}")
     }
+    if (!is_positive_integer(parallel_chains)) {
+        cli::cli_abort("parallel_chains must be one finite positive integer")
+    }
+    if (!is_nonnegative_integer(refresh)) {
+        cli::cli_abort("refresh must be one finite nonnegative integer")
+    }
     chains <- as.integer(chains)
     iter_warmup <- as.integer(iter_warmup)
     iter_sampling <- as.integer(iter_sampling)
     thin <- as.integer(thin)
     if (!is.null(seed)) seed <- as.integer(seed)
+    parallel_chains <- min(as.integer(parallel_chains), chains)
+    refresh <- as.integer(refresh)
     compiled <- compile_combo_model(
         model,
         data,
         cell_data = cell_data,
         compound_data = compound_data
     )
-    set.seed(seed)
     retained_per_chain <- iter_sampling %/% thin
-    total <- chains * retained_per_chain
-    snapshots <- vector("list", total)
-    chain_id <- integer(total)
-    draw_id <- integer(total)
-    iteration <- integer(total)
-    output <- 0L
-    # TODO: Consider parallelizing chains in the future.
-    for (chain in seq_len(chains)) {
-        state <- init_gibbs_state(compiled)
-        for (step in seq_len(iter_warmup)) state <- gibbs_step(state)
-        for (step in seq_len(iter_sampling)) {
-            state <- gibbs_step(state)
-            if (step %% thin == 0L) {
-                output <- output + 1L
-                snapshots[[output]] <- gibbs_snapshot(state)
-                chain_id[output] <- chain
-                draw_id[output] <- step %/% thin
-                iteration[output] <- iter_warmup + step
-            }
-        }
-    }
+    chain_draws <- combo_run_chains(
+        compiled = compiled,
+        seed = seed,
+        chains = chains,
+        iter_warmup = iter_warmup,
+        iter_sampling = iter_sampling,
+        thin = thin,
+        parallel_chains = parallel_chains,
+        refresh = refresh
+    )
+    snapshots <- unlist(chain_draws, recursive = FALSE)
+    chain_id <- rep(seq_len(chains), each = retained_per_chain)
+    draw_id <- rep(seq_len(retained_per_chain), times = chains)
+    iteration <- rep(
+        iter_warmup + seq.int(thin, iter_sampling, by = thin),
+        times = chains
+    )
     structure(
         list(
             model = model,
@@ -127,7 +146,8 @@ fit_combo <- function(
                 iter_warmup = iter_warmup,
                 iter_sampling = iter_sampling,
                 thin = thin,
-                seed = seed
+                seed = seed,
+                parallel_chains = parallel_chains
             ),
             control = control,
             input = list(

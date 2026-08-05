@@ -32,7 +32,9 @@ combo_test_fit <- function(
     iter_warmup = 2L,
     iter_sampling = 4L,
     thin = 2L,
-    model = combo_test_model()
+    model = combo_test_model(),
+    parallel_chains = 1L,
+    refresh = 0L
 ) {
     fit_combo(
         model,
@@ -41,6 +43,8 @@ combo_test_fit <- function(
         iter_warmup = iter_warmup,
         iter_sampling = iter_sampling,
         thin = thin,
-        seed = seed
+        seed = seed,
+        parallel_chains = parallel_chains,
+        refresh = refresh
     )
 }

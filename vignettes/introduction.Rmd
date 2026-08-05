@@ -265,15 +265,36 @@ dimensionality (2 instead of 100):
 - the `global_intercept` is the empirical mean of the observed responses,
 - the Gaussian *observation precision* has a gamma prior
 
+Independent chains can run concurrently. Use `future::availableCores()` to
+respect limits imposed by the operating system, containers, job schedulers,
+and R package checks, then cap the worker count at the number of chains. This
+falls back to sequential execution when only one core is available.
+
+```{r parallel-resources}
+fit_chains <- 2L
+fit_parallel_chains <- min(
+    fit_chains,
+    as.integer(future::availableCores())
+)
+
+c(
+    chains = fit_chains,
+    available_cores = future::availableCores(),
+    parallel_chains = fit_parallel_chains
+)
+```
+
 ```{r fit-model}
 fit <- fit_combo(
     model,
     experiments,
-    chains = 2L,
+    chains = fit_chains,
+    parallel_chains = fit_parallel_chains,
     iter_warmup = 25L,
     iter_sampling = 25L,
     thin = 1L,
-    seed = 20260804L
+    seed = 20260804L,
+    refresh = if (interactive()) 10L else 0L
 )
 fit
 summary(fit)
@@ -287,6 +308,13 @@ are useful basic summaries, but they are not convergence diagnostics.
 The deliberately short run keeps this vignette portable and executable. A
 substantive analysis should use longer chains and assess convergence and
 effective sample sizes before drawing scientific conclusions.
+
+In an interactive session, `refresh = 10L` updates one progress bar per chain
+every ten iterations and at warmup and sampling boundaries. Progress is
+disabled above only when the vignette is knitted, where dynamic terminal output
+would obscure the rendered document. For a larger fit, the same safe pattern is
+`parallel_chains = min(chains, future::availableCores())`. A fixed `seed`
+produces the same chain draws regardless of the effective worker count.
 
 ## Posterior predictive checks
 

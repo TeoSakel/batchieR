@@ -21,8 +21,16 @@ param_scalar_positive <- function(x, label) {
     as.numeric(x)
 }
 
+is_integer <- function(x) {
+    is.numeric(x) && !is.na(x) && is.finite(x) && x == as.integer(x)
+}
+
 is_positive_integer <- function(x) {
-    length(x) == 1L && !is.na(x) && is.finite(x) && x >= 1 && x == as.integer(x)
+    is_integer(x) && x > 0
+}
+
+is_nonnegative_integer <- function(x) {
+    is_integer(x) && x >= 0
 }
 
 param_positive_integer <- function(x, label) {

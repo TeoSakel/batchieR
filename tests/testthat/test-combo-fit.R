@@ -133,3 +133,97 @@ test_that("fit_combo compiles cell and compound metadata means", {
     expect_named(fit$draws[[1L]]$components$cell_offset$beta, "feature")
     expect_named(fit$draws[[1L]]$components$treatment_offset$beta, "feature")
 })
+
+test_that("fit_combo validates parallel and progress controls", {
+    model <- combo_test_model()
+    data <- combo_test_data()
+
+    expect_error(
+        fit_combo(model, data, parallel_chains = 0),
+        "parallel_chains must be"
+    )
+    expect_error(
+        fit_combo(model, data, parallel_chains = 1.5),
+        "parallel_chains must be"
+    )
+    expect_error(fit_combo(model, data, refresh = -1), "refresh must be")
+    expect_error(fit_combo(model, data, refresh = 1.5), "refresh must be")
+})
+
+test_that("chain RNG is deterministic across worker counts", {
+    serial <- combo_test_fit(parallel_chains = 1L)
+    parallel <- combo_test_fit(parallel_chains = 2L)
+    capped <- combo_test_fit(parallel_chains = 10L)
+
+    expect_identical(parallel$draws, serial$draws)
+    expect_identical(capped$draws, serial$draws)
+    expect_identical(parallel$chain_id, serial$chain_id)
+    expect_identical(parallel$draw_id, serial$draw_id)
+    expect_identical(parallel$iteration, serial$iteration)
+    expect_identical(parallel$sampling$parallel_chains, 2L)
+    expect_identical(capped$sampling$parallel_chains, 2L)
+    expect_false(identical(
+        serial$draws[serial$chain_id == 1L],
+        serial$draws[serial$chain_id == 2L]
+    ))
+})
+
+test_that("chain progress reports phases at the requested cadence", {
+    events <- list()
+    report <- batchieR:::combo_chain_reporter(
+        refresh = 2L,
+        iter_warmup = 2L,
+        iter_sampling = 4L,
+        chain = 1L,
+        update = function(info) events[[length(events) + 1L]] <<- info
+    )
+
+    report(0L, "warmup")
+    report(1L, "warmup")
+    report(2L, "warmup")
+    report(2L, "sampling")
+    report(3L, "sampling")
+    report(4L, "sampling")
+    report(5L, "sampling")
+    report(6L, "sampling")
+
+    expect_identical(
+        vapply(events, function(event) event[["current"]], integer(1)),
+        c(0L, 2L, 2L, 4L, 6L)
+    )
+    expect_identical(
+        vapply(events, function(event) event[["phase"]], character(1)),
+        c("warmup", "warmup", "sampling", "sampling", "sampling")
+    )
+    expect_identical(
+        vapply(events, function(event) event[["chain"]], integer(1)),
+        rep(1L, 5L)
+    )
+    expect_identical(
+        vapply(events, function(event) event[["amount"]], integer(1)),
+        c(0L, 2L, 0L, 2L, 2L)
+    )
+})
+
+test_that("fit_combo progress can be shown or disabled", {
+    expect_silent(combo_test_fit(chains = 1L, refresh = 0L))
+    expect_no_error(invisible(combo_test_fit(chains = 1L, refresh = 1L)))
+    expect_no_error(invisible(combo_test_fit(parallel_chains = 2L, refresh = 1L)))
+    expect_identical(future::nbrOfWorkers(), 1L)
+})
+
+test_that("parallel chain failures identify the chain", {
+    expect_error(
+        batchieR:::combo_run_chains(
+            compiled = list(),
+            seed = 42L,
+            chains = 2L,
+            iter_warmup = 1L,
+            iter_sampling = 1L,
+            thin = 1L,
+            parallel_chains = 2L,
+            refresh = 0L
+        ),
+        "Chain 1 failed"
+    )
+})
