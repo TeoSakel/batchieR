@@ -80,7 +80,4 @@ at least one response must be observed.
 Each chain is initialized independently. After warmup, the sampler performs
 \code{iter_sampling} transitions and retains every \code{thin}th state, for
 \code{floor(iter_sampling / thin)} draws per chain.
-
-Chains are evaluated as independent futures. Seeded fits use parallel-safe
-random-number streams and produce the same draws for any worker count.
 }

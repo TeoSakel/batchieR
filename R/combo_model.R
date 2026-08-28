@@ -148,33 +148,33 @@ combo_model <- function(
 #' @export
 print.combo_model <- function(x, ...) {
     output <- cli::cli_format_method({
-    cli::cli_text("<combo_model>")
-    cli::cli_text("family: Gaussian(identity)")
-    cli::cli_text("rank: {x[['rank']]}")
-    intercept <- if (x$global_intercept$type == "empirical") {
-        "empirical observed-response mean"
-    } else {
-        format(x$global_intercept$value)
-    }
-    cli::cli_text("global_intercept: {intercept}")
-    if (x$dose$type == "categorical") {
-        cli::cli_text("dose: categorical")
-    } else {
-        cli::cli_text("dose: nested (relative precision {x[['dose']][['precision']]})")
-    }
-    cli::cli_text("components:")
-    for (name in names(x$components)) {
-        component <- x$components[[name]]
-        if (is.null(component)) {
-            cli::cli_text("- {name}: disabled")
-            next
+        cli::cli_text("<combo_model>")
+        cli::cli_text("family: Gaussian(identity)")
+        cli::cli_text("rank: {x[['rank']]}")
+        intercept <- if (x$global_intercept$type == "empirical") { # nolint: object_usage_linter.
+            "empirical observed-response mean"
+        } else {
+            format(x$global_intercept$value)
         }
-        structure <- structure_type(component[["structure"]])
-        shrinkage <- component[["shrinkage"]][["type"]]
-        cli::cli_text(
-            "- {name}: mean {deparse(component[['mean']])} | structure {structure} | shrinkage {shrinkage}"
-        )
-    }
+        cli::cli_text("global_intercept: {intercept}")
+        if (x$dose$type == "categorical") {
+            cli::cli_text("dose: categorical")
+        } else {
+            cli::cli_text("dose: nested (relative precision {x[['dose']][['precision']]})")
+        }
+        cli::cli_text("components:")
+        for (name in names(x$components)) {
+            component <- x$components[[name]]
+            if (is.null(component)) {
+                cli::cli_text("- {name}: disabled")
+                next
+            }
+            structure <- structure_type(component[["structure"]]) # nolint: object_usage_linter.
+            shrinkage <- component[["shrinkage"]][["type"]] # nolint: object_usage_linter.
+            cli::cli_text(
+                "- {name}: mean {deparse(component[['mean']])} | structure {structure} | shrinkage {shrinkage}"
+            )
+        }
     })
     writeLines(output)
     invisible(x)

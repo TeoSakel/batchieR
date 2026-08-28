@@ -15,9 +15,6 @@
 #' `iter_sampling` transitions and retains every `thin`th state, for
 #' `floor(iter_sampling / thin)` draws per chain.
 #'
-#' Chains are evaluated as independent futures. Seeded fits use parallel-safe
-#' random-number streams and produce the same draws for any worker count.
-#'
 #' @param model A combination-model specification created by `combo_model()`.
 #' @param data A data frame of combination-screen observations. See Details for
 #'   the required columns.
@@ -180,19 +177,19 @@ NULL
 #' @export
 print.combo_fit <- function(x, ...) {
     output <- cli::cli_format_method({
-    cli::cli_text("<combo_fit>")
-    cli::cli_text("engine: {x[['engine']]}")
-    cli::cli_text("chains: {x[['sampling']][['chains']]}")
-    cli::cli_text(
-        "iterations: {x[['sampling']][['iter_warmup']] + x[['sampling']][['iter_sampling']]} per chain"
-    )
-    cli::cli_text("warmup: {x[['sampling']][['iter_warmup']]}")
-    cli::cli_text("sampling: {x[['sampling']][['iter_sampling']]}")
-    cli::cli_text("thin: {x[['sampling']][['thin']]}")
-    cli::cli_text("retained draws: {length(x[['draws']])}")
-    cli::cli_text("observations: {length(x[['compiled']][['observed_rows']])}")
-    cli::cli_text("cells: {length(x[['compiled']][['cells']])}")
-    cli::cli_text("treatments: {nrow(x[['compiled']][['treatments']])}")
+        cli::cli_text("<combo_fit>")
+        cli::cli_text("engine: {x[['engine']]}")
+        cli::cli_text("chains: {x[['sampling']][['chains']]}")
+        cli::cli_text(
+            "iterations: {x[['sampling']][['iter_warmup']] + x[['sampling']][['iter_sampling']]} per chain"
+        )
+        cli::cli_text("warmup: {x[['sampling']][['iter_warmup']]}")
+        cli::cli_text("sampling: {x[['sampling']][['iter_sampling']]}")
+        cli::cli_text("thin: {x[['sampling']][['thin']]}")
+        cli::cli_text("retained draws: {length(x[['draws']])}")
+        cli::cli_text("observations: {length(x[['compiled']][['observed_rows']])}")
+        cli::cli_text("cells: {length(x[['compiled']][['cells']])}")
+        cli::cli_text("treatments: {nrow(x[['compiled']][['treatments']])}")
     })
     writeLines(output)
     invisible(x)
@@ -231,15 +228,15 @@ summary.combo_fit <- function(object, ...) {
 #' @export
 print.summary.combo_fit <- function(x, ...) {
     output <- cli::cli_format_method({
-    cli::cli_text("Combination-model Gibbs fit")
-    cli::cli_text("engine: {x[['engine']]}")
-    cli::cli_text("observations: {x[['n_observed']]}")
-    cli::cli_text("cells: {x[['n_cells']]}")
-    cli::cli_text("treatments: {x[['n_treatments']]}")
-    cli::cli_text("draws: {x[['n_draws']]}")
-    cli::cli_text(
-        "RMSE (5%, 50%, 95%): {format(x[['rmse']], digits = 4)}"
-    )
+        cli::cli_text("Combination-model Gibbs fit")
+        cli::cli_text("engine: {x[['engine']]}")
+        cli::cli_text("observations: {x[['n_observed']]}")
+        cli::cli_text("cells: {x[['n_cells']]}")
+        cli::cli_text("treatments: {x[['n_treatments']]}")
+        cli::cli_text("draws: {x[['n_draws']]}")
+        cli::cli_text(
+            "RMSE (5%, 50%, 95%): {format(x[['rmse']], digits = 4)}"
+        )
     })
     writeLines(output)
     invisible(x)
