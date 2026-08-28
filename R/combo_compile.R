@@ -11,7 +11,12 @@ combo_id_text <- function(x) {
         x <- as.character(x)
     }
     if (is.numeric(x)) {
-        result <- format(x, digits = 17, scientific = FALSE, trim = TRUE)
+        # `format()` chooses a common display precision from the full vector,
+        # so the same number can receive different text when it appears in
+        # different treatment-position columns. Seventeen significant digits
+        # round-trip a double while remaining independent of vector context.
+        x[x == 0 & !is.na(x)] <- 0
+        result <- sprintf("%.17g", as.numeric(x))
         result[missing] <- NA_character_
         return(result)
     }

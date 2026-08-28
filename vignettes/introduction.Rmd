@@ -425,8 +425,8 @@ plate_scores
 `plate` is the candidate-list name, `n_experiments` is its row count, `score`
 is the ranking-equivalent log PDBAL objective, and `rank` orders plates from
 best to worst. Lower scores are preferred. Plate 7 is selected: its cross-pair
-combinations better distinguish posterior hypotheses across the reference surface than the confirmatory or redundant
-configurations.
+combinations better distinguish posterior hypotheses across the reference surface
+than the confirmatory or redundant configurations.
 
 The `plogis` transformation applies only when distances between reference-grid
 posterior expectations are calculated. Candidate likelihoods and their overlap

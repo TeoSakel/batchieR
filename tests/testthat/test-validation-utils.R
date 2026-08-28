@@ -18,6 +18,33 @@ test_that("experiment validation allows repeated cell identifiers", {
     )
 })
 
+test_that("numeric identifiers are stable across vector contexts", {
+    expect_identical(
+        combo_id_text(c(0.35, 10))[1L],
+        combo_id_text(c(0.35, 1.08))[1L]
+    )
+    expect_identical(combo_id_text(-0), combo_id_text(0))
+})
+
+test_that("identical treatments in different positions compile once", {
+    experiments <- data.frame(
+        cell = rep("A", 3L),
+        drug_1 = c("X", "Y", "Z"),
+        dose_1 = c(0.35, 10, 0.01),
+        drug_2 = c("Y", "X", NA),
+        dose_2 = c(1.08, 0.35, NA),
+        response = c(0.2, 0.3, 0.4)
+    )
+
+    compiled <- compile_combo_model(
+        combo_model(rank = 1L),
+        experiments
+    )
+
+    expect_equal(nrow(compiled$treatments), 4L)
+    expect_equal(sum(compiled$treatments$drug == "X"), 1L)
+})
+
 test_that("clip supports elementwise lower bounds", {
     expect_equal(
         clip(c(0, 2), lower = c(1, 3), upper = 4),

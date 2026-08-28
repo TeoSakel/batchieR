@@ -95,6 +95,31 @@ combo_chain_reporter <- function(
     }
 }
 
+combo_chain_worker_environment <- function() {
+    namespace <- environment(combo_run_chains)
+    if (!exists(".__DEVTOOLS__", envir = namespace, inherits = FALSE)) {
+        return(namespace)
+    }
+    worker <- new.env(parent = baseenv())
+    names <- ls(namespace, all.names = TRUE)
+    names <- names[vapply(names, function(name) {
+        value <- get(name, envir = namespace, inherits = FALSE)
+        is.function(value) && identical(environment(value), namespace)
+    }, logical(1))]
+    # Clone package-owned closures into an ordinary environment. This allows
+    # future to serialize development versions loaded with pkgload; namespace
+    # closures would otherwise be treated as coming from an installed package.
+    for (name in names) {
+        assign(name, get(name, envir = namespace, inherits = FALSE), envir = worker)
+    }
+    for (name in names) {
+        value <- get(name, envir = worker, inherits = FALSE)
+        environment(value) <- worker
+        assign(name, value, envir = worker)
+    }
+    worker
+}
+
 combo_run_chains <- function(
     compiled,
     seed,
@@ -113,18 +138,16 @@ combo_run_chains <- function(
             workers = parallel_chains
         )
     }
-    previous_plan <- future::plan(strategy)
+    # Register restoration before starting a backend. Backend construction can
+    # itself fail (for example, when local sockets are unavailable), and must
+    # not leave a partially selected multisession plan behind.
+    previous_plan <- future::plan()
     on.exit(future::plan(previous_plan), add = TRUE)
+    future::plan(strategy)
 
     steps_per_chain <- iter_warmup + iter_sampling
-    chain_task <- combo_chain_task
-    environment(chain_task) <- list2env(
-        list(
-            combo_chain_reporter = combo_chain_reporter,
-            combo_run_chain = combo_run_chain
-        ),
-        parent = environment(chain_task)
-    )
+    worker_environment <- combo_chain_worker_environment()
+    chain_task <- worker_environment$combo_chain_task
     results <- progressr::with_progress(
         {
             progress <- lapply(seq_len(chains), function(chain) {
