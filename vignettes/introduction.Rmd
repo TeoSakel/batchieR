@@ -435,9 +435,13 @@ remain Gaussian on the fitted logit scale.
 ## Limitations and next steps
 
 This introduction uses one dose, IID structures, fixed synthetic truth, and a
-short sampler run. Hierarchical and other prior adaptations are reserved for a
-follow-up vignette. The package also provides other posterior interfaces, but
-non-Gaussian response families and a public prior-predictive simulation
+short sampler run. See
+`vignette("biology-informed-scoring", package = "batchieR")` for a more
+rigorous treatment of prior information through metadata means, shrinkage,
+dose pooling, and GMRF or tree structures. It also shows how those assumptions
+propagate to prediction and plate ranking. The package also provides other
+posterior interfaces,
+but non-Gaussian response families and a public prior-predictive simulation
 interface are not currently available. See
 `?combo_model`, `?combo_gaussian_component`, `?fit_combo`,
 `?posterior_predictions`, and `?score_plate_pdbal` for API details.

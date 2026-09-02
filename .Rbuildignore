@@ -9,3 +9,5 @@
 ^AGENTS\.md$
 ^\.quarto$
 ^experiments$
+^doc$
+^Meta$
