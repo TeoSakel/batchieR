@@ -57,6 +57,16 @@ test_that("clip supports elementwise lower bounds", {
     )
 })
 
+test_that("rhcauchy draws nonnegative half-Cauchy values", {
+    set.seed(92L)
+    observed <- rhcauchy(4L, scale = 2)
+    set.seed(92L)
+    expected <- abs(stats::rcauchy(4L, location = 0, scale = 2))
+
+    expect_identical(observed, expected)
+    expect_true(all(observed >= 0))
+})
+
 test_that("numerical fallback reports a cli warning", {
     expect_warning(
         value <- rmvnorm_safe(

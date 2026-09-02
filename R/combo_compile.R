@@ -471,20 +471,17 @@ combo_compile_component <- function(
     )
 }
 
-compile_combo_model <- function(
+compile_combo_design <- function(
     model,
     data,
     cell_data = NULL,
-    compound_data = NULL
+    compound_data = NULL,
+    require_response = FALSE
 ) {
     if (!inherits(model, "combo_model")) {
         cli::cli_abort("model must be constructed by combo_model()")
     }
-    parsed <- validate_experiments(data)
-    observed <- which(!is.na(parsed$response))
-    if (!length(observed)) {
-        cli::cli_abort("fit_combo requires at least one observed response")
-    }
+    parsed <- validate_experiments(data, require_response = require_response)
     cells <- unique(parsed$cell)
     all_treatment_keys <- c(parsed$key_1, parsed$key_2)
     treatment_keys <- unique(all_treatment_keys)
@@ -514,15 +511,6 @@ compile_combo_model <- function(
     treatment_index_2 <- match(parsed$key_2, treatment_keys)
     treatment_index_1[is.na(parsed$key_1)] <- 0L
     treatment_index_2[is.na(parsed$key_2)] <- 0L
-
-    active_v2 <- !is.null(
-        model$components$treatment_interaction_factors
-    )
-    self <- treatment_index_1[observed] > 0L &
-        treatment_index_1[observed] == treatment_index_2[observed]
-    if (active_v2 && any(self)) {
-        cli::cli_abort("Observed self-combinations are not conditionally Gaussian for treatment_interaction_factors")
-    }
 
     specs <- list(
         cell_offset = list(kind = "offset", side = "cell", dims = 1L),
@@ -561,25 +549,6 @@ compile_combo_model <- function(
             treatments
         )
     }
-    cell_exposure <- tabulate(cell_index[observed], nbins = length(cells))
-    treatment_exposure <- tabulate(
-        c(
-            treatment_index_1[observed],
-            treatment_index_2[observed]
-        ),
-        nbins = length(treatment_keys)
-    )
-    for (name in names(components)) {
-        if (is.null(components[[name]])) {
-            next
-        }
-        components[[name]]$exposure_count <-
-            if (components[[name]]$side == "cell") {
-                cell_exposure
-            } else {
-                treatment_exposure
-            }
-    }
     active_components <- Filter(Negate(is.null), components)
     fast_iid <- model$dose$type == "categorical" &&
         all(vapply(
@@ -587,20 +556,11 @@ compile_combo_model <- function(
             function(component) component$structure$iid,
             logical(1)
         ))
-    alpha <- if (model$global_intercept$type == "empirical") {
-        mean(parsed$response[observed])
-    } else {
-        model$global_intercept$value
-    }
     structure(
         list(
             model = model,
             data = parsed$data,
-            response = parsed$response[observed],
-            observed_rows = observed,
-            cell = cell_index[observed],
-            treatment_1 = treatment_index_1[observed],
-            treatment_2 = treatment_index_2[observed],
+            validated_response = parsed$response,
             all_cell = cell_index,
             all_treatment_1 = treatment_index_1,
             all_treatment_2 = treatment_index_2,
@@ -609,9 +569,91 @@ compile_combo_model <- function(
             cell_metadata = cell_metadata,
             treatment_metadata = treatment_metadata,
             components = components,
-            alpha = alpha,
             observation_prior = model$family$precision,
             fast_iid = fast_iid
+        ),
+        class = "compiled_combo_design"
+    )
+}
+
+compile_combo_model <- function(
+    model,
+    data,
+    cell_data = NULL,
+    compound_data = NULL
+) {
+    compiled <- compile_combo_design(
+        model,
+        data,
+        cell_data = cell_data,
+        compound_data = compound_data,
+        require_response = TRUE
+    )
+    response <- compiled$validated_response
+    observed <- which(!is.na(response))
+    if (!length(observed)) {
+        cli::cli_abort("fit_combo requires at least one observed response")
+    }
+
+    active_v2 <- !is.null(
+        model$components$treatment_interaction_factors
+    )
+    self <- compiled$all_treatment_1[observed] > 0L &
+        compiled$all_treatment_1[observed] ==
+            compiled$all_treatment_2[observed]
+    if (active_v2 && any(self)) {
+        cli::cli_abort("Observed self-combinations are not conditionally Gaussian for treatment_interaction_factors")
+    }
+
+    cell_exposure <- tabulate(
+        compiled$all_cell[observed],
+        nbins = length(compiled$cells)
+    )
+    treatment_exposure <- tabulate(
+        c(
+            compiled$all_treatment_1[observed],
+            compiled$all_treatment_2[observed]
+        ),
+        nbins = nrow(compiled$treatments)
+    )
+    for (name in names(compiled$components)) {
+        component <- compiled$components[[name]]
+        if (is.null(component)) {
+            next
+        }
+        component$exposure_count <- if (component$side == "cell") {
+            cell_exposure
+        } else {
+            treatment_exposure
+        }
+        compiled$components[[name]] <- component
+    }
+
+    alpha <- if (model$global_intercept$type == "empirical") {
+        mean(response[observed])
+    } else {
+        model$global_intercept$value
+    }
+    structure(
+        list(
+            model = compiled$model,
+            data = compiled$data,
+            response = response[observed],
+            observed_rows = observed,
+            cell = compiled$all_cell[observed],
+            treatment_1 = compiled$all_treatment_1[observed],
+            treatment_2 = compiled$all_treatment_2[observed],
+            all_cell = compiled$all_cell,
+            all_treatment_1 = compiled$all_treatment_1,
+            all_treatment_2 = compiled$all_treatment_2,
+            cells = compiled$cells,
+            treatments = compiled$treatments,
+            cell_metadata = compiled$cell_metadata,
+            treatment_metadata = compiled$treatment_metadata,
+            components = compiled$components,
+            alpha = alpha,
+            observation_prior = compiled$observation_prior,
+            fast_iid = compiled$fast_iid
         ),
         class = "compiled_combo_model"
     )

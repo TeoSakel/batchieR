@@ -57,6 +57,10 @@ clip <- function(x, lower = -Inf, upper = Inf) {
     pmax(pmin(x, upper), lower)  # keep shape of x
 }
 
+rhcauchy <- function(n, scale = 1) {
+    abs(stats::rcauchy(n, location = 0, scale = scale))
+}
+
 batchieR_rmvnorm <- function(precision, mu_part = NULL) {
     upper <- chol(precision)
     value <- backsolve(upper, stats::rnorm(nrow(precision)))
