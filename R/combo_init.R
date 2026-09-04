@@ -30,12 +30,12 @@ init_shrinkage <- function(spec, n_entities, n_dimensions) {
     result
 }
 
-init_mean_shrinkage <- function(mean) {
+init_beta_precision <- function(mean) {
     p <- ncol(mean$X)
     if (!p) {
         return(NULL)
     }
-    spec <- mean$shrinkage
+    spec <- mean$beta_precision
     list(
         spec = spec,
         precision = if (spec$type == "fixed") spec$precision else 1
@@ -51,7 +51,7 @@ init_mean_shrinkage <- function(mean) {
 #' - `raw`: node-level deviations governed by the structural prior; hierarchical
 #'   structures may include latent nodes that have no corresponding entity.
 #' - `beta` and `mean_value`: mean-model coefficients and their fitted value for each entity.
-#' - `mean_shrinkage`: precision state for the mean-model coefficients.
+#' - `beta_precision`: precision state for the mean-model coefficients.
 #' - `shrinkage`: global, local, auxiliary, or dimension-specific precision state
 #'   for the component deviations, depending on its shrinkage specification.
 #'
@@ -105,7 +105,7 @@ init_component_state <- function(compiled) {
         } else {
             numeric(nrow(values))
         },
-        mean_shrinkage = init_mean_shrinkage(compiled$mean),
+        beta_precision = init_beta_precision(compiled$mean),
         shrinkage = init_shrinkage(
             compiled$shrinkage,
             compiled$n_entities,

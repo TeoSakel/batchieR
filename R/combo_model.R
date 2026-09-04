@@ -194,7 +194,7 @@ print.combo_model <- function(x, ...) {
 #'
 #' - `mean` defines the feature-informed part. It is currently available only for
 #'   scalar offset components.
-#' - `mean_shrinkage` regularizes their coefficients of the mean formula if they exist;
+#' - `beta_precision` regularizes their coefficients of the mean formula if they exist;
 #'   see [shrinkage_specifications].
 #' - `structure` describes which cell or treatment deviations are related and their
 #'   relative precision. See [context_specifications].
@@ -203,9 +203,12 @@ print.combo_model <- function(x, ...) {
 #'
 #' @param shrinkage Deviation-shrinkage specification; see [shrinkage_specifications].
 #' @param mean One-sided metadata formula for the entity-level mean. Use `~0`
-#'   for a zero mean. Nonzero formulas are supported only for offset components.
-#' @param mean_shrinkage Shrinkage specification for metadata-mean
-#'   coefficients, or `NULL`; see [shrinkage_specifications].
+#'   for a zero mean. Formula-generated model-matrix columns are centered and
+#'   scaled to unit sample standard deviation before coefficients are applied.
+#'   Nonzero formulas are supported only for offset components.
+#' @param beta_precision Precision specification for metadata-mean
+#'   coefficients on this standardized design scale, or `NULL`; see
+#'   [shrinkage_specifications].
 #' @param structure Relationship structure among component entities. `NULL`
 #'   selects IID; see [context_specifications].
 #' @return A `combo_gaussian_component` specification, inheriting from the
@@ -214,7 +217,7 @@ print.combo_model <- function(x, ...) {
 combo_gaussian_component <- function(
     shrinkage,
     mean = ~0,
-    mean_shrinkage = NULL,
+    beta_precision = NULL,
     structure = NULL
 ) {
     if (!inherits(mean, "formula") || length(mean) != 2L) {
@@ -223,8 +226,8 @@ combo_gaussian_component <- function(
     if (missing(shrinkage) || !inherits(shrinkage, "param_shrinkage")) {
         cli::cli_abort("shrinkage must be an explicit shrinkage specification")
     }
-    if (!is.null(mean_shrinkage) && !inherits(mean_shrinkage, "param_shrinkage")) {
-        cli::cli_abort("mean_shrinkage must be NULL or a shrinkage specification")
+    if (!is.null(beta_precision) && !inherits(beta_precision, "param_shrinkage")) {
+        cli::cli_abort("beta_precision must be NULL or a shrinkage specification")
     }
     if (is.null(structure)) {
         # iid() is defined with the structural-prior code. A small independent
@@ -237,7 +240,7 @@ combo_gaussian_component <- function(
     structure(
         list(
             mean = mean,
-            mean_shrinkage = mean_shrinkage,
+            beta_precision = beta_precision,
             structure = structure,
             shrinkage = shrinkage
         ),
@@ -262,17 +265,17 @@ validate_component <- function(component, name, kind) {
             "Nonzero mean formulas are supported only for offset components; {name} must use ~ 0"
         )  # TODO: this should be relaxed to a warning.
     }
-    if (has_mean && is.null(component$mean_shrinkage)) {
-        # TODO: this could be relaxed to a warning, with a default mean_shrinkage applied.
-        cli::cli_abort("{name} requires mean_shrinkage when its mean has predictors")
+    if (has_mean && is.null(component$beta_precision)) {
+        # TODO: this could be relaxed to a warning, with a default beta_precision applied.
+        cli::cli_abort("{name} requires beta_precision when its mean has predictors")
     }
-    if (!has_mean && !is.null(component$mean_shrinkage)) {
-        # TODO: this could be relaxed to a warning, with mean_shrinkage ignored.
-        cli::cli_abort("{name} must omit mean_shrinkage when mean is ~ 0")
+    if (!has_mean && !is.null(component$beta_precision)) {
+        # TODO: this could be relaxed to a warning, with beta_precision ignored.
+        cli::cli_abort("{name} must omit beta_precision when mean is ~ 0")
     }
-    if (has_mean && !component$mean_shrinkage$type %in% c("fixed", "gamma")) {
+    if (has_mean && !component$beta_precision$type %in% c("fixed", "gamma")) {
         cli::cli_abort(
-            "{name} mean_shrinkage must be fixed_scale() or gamma_precision() when mean has predictors"
+            "{name} beta_precision must be fixed_scale() or gamma_precision() when mean has predictors"
         )
     }
     q_type <- structure_type(component$structure)

@@ -389,11 +389,11 @@ parameter_map <- function(fit, include = c("public", "all")) {
             beta_map$feature <- names(component$beta)
             result[[length(result) + 1L]] <- beta_map
         }
-        if (!is.null(component$mean_precision)) {
+        if (!is.null(component$beta_precision)) {
             result[[length(result) + 1L]] <- combo_basic_map_row(
-                paste0(component_name, "_mean_precision"),
+                paste0(component_name, "_beta_precision"),
                 component_name,
-                "mean_precision"
+                "beta_precision"
             )
         }
         result[[length(result) + 1L]] <- combo_hyperparameter_map(
@@ -491,11 +491,11 @@ combo_flatten_snapshot <- function(fit, snapshot, draw_index, include) {
             )
             result <- c(result, beta)
         }
-        if (!is.null(component$mean_precision)) {
-            mean_precision <- component$mean_precision
-            names(mean_precision) <-
-                paste0(component_name, "_mean_precision")
-            result <- c(result, mean_precision)
+        if (!is.null(component$beta_precision)) {
+            beta_precision <- component$beta_precision
+            names(beta_precision) <-
+                paste0(component_name, "_beta_precision")
+            result <- c(result, beta_precision)
         }
         global <- as.numeric(component$global_precision)
         names(global) <- combo_vector_variable_names(

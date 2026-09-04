@@ -7,7 +7,7 @@
 combo_gaussian_component(
   shrinkage,
   mean = ~0,
-  mean_shrinkage = NULL,
+  beta_precision = NULL,
   structure = NULL
 )
 }
@@ -15,10 +15,13 @@ combo_gaussian_component(
 \item{shrinkage}{Deviation-shrinkage specification; see \link{shrinkage_specifications}.}
 
 \item{mean}{One-sided metadata formula for the entity-level mean. Use \code{~0}
-for a zero mean. Nonzero formulas are supported only for offset components.}
+for a zero mean. Formula-generated model-matrix columns are centered and
+scaled to unit sample standard deviation before coefficients are applied.
+Nonzero formulas are supported only for offset components.}
 
-\item{mean_shrinkage}{Shrinkage specification for metadata-mean
-coefficients, or \code{NULL}; see \link{shrinkage_specifications}.}
+\item{beta_precision}{Precision specification for metadata-mean
+coefficients on this standardized design scale, or \code{NULL}; see
+\link{shrinkage_specifications}.}
 
 \item{structure}{Relationship structure among component entities. \code{NULL}
 selects IID; see \link{context_specifications}.}
@@ -40,7 +43,7 @@ An enabled component separates systematic and residual variation:
 \itemize{
 \item \code{mean} defines the feature-informed part. It is currently available only for
 scalar offset components.
-\item \code{mean_shrinkage} regularizes their coefficients of the mean formula if they exist;
+\item \code{beta_precision} regularizes their coefficients of the mean formula if they exist;
 see \link{shrinkage_specifications}.
 \item \code{structure} describes which cell or treatment deviations are related and their
 relative precision. See \link{context_specifications}.

@@ -1,11 +1,20 @@
 # Prior prediction for combination models.
 
-#' Draw prior-predictive responses
+#' Draw predictions from the prior
 #'
-#' Draws replicated responses from the generative prior defined by a [combo_model()].
-#' The design and metadata inputs follow [fit_combo()], but a `response` column is optional.
-#' Responses do not otherwise condition the draws; for a model using [empirical_intercept()],
-#' their only possible use is to supply the fallback intercept.
+#' Draws latent conditional means or replicated responses from the generative prior defined by a [combo_model()].
+#'
+#' @details
+#' Each `beta_offset` entry may be an unnamed numeric scalar, which is recycled,
+#' or a named numeric vector matched to compiled coefficient names. Omitted
+#' coefficients and list entries default to zero. A nonzero or named entry
+#' requires the corresponding component to have coefficients.
+#'
+#' Formula-generated model-matrix columns are centered and scaled to unit sample
+#' standard deviation before coefficients are applied. `beta_offset` therefore
+#' operates on this standardized design scale, not on raw covariates. For an
+#' ordinary numeric covariate, one coefficient unit is the effect of a one-standard-
+#' deviation increase, holding the other design columns fixed.
 #'
 #' @param model A combination-model specification created by [combo_model()].
 #' @param data A data frame containing the `cell`, `drug_1`, `dose_1`, `drug_2`,
@@ -21,9 +30,15 @@
 #'   the mean of nonmissing responses. If neither is available, an error is
 #'   raised. This argument must be `NULL` when the model uses
 #'   [fixed_intercept()].
+#' @param type Whether to draw replicated `response` values including observation
+#'   noise, or latent conditional `mean` values.
+#' @param beta_offset A named list with optional `cell_offset` and
+#'   `treatment_offset` entries giving prior means for coefficients in the
+#'   cell-offset and treatment-offset mean formulas, respectively.
 #'
-#' @return A numeric matrix with one row per draw and one column per input design row,
-#'         matching the shape and column naming convention of [posterior_predict()].
+#' @return A numeric matrix with one row per draw and one column per input design row.
+#'   With `type = "response"`, it matches the shape and column naming convention
+#'   of [posterior_predict()]; with `type = "mean"`, it contains latent conditional means.
 #'
 #' @examples
 #' design <- data.frame(
@@ -47,11 +62,14 @@ prior_predict <- function(
     compound_data = NULL,
     draws = 100L,
     seed = NULL,
-    intercept = NULL
+    intercept = NULL,
+    type = c("response", "mean"),
+    beta_offset = list(cell_offset = 0, treatment_offset = 0)
 ) {
     if (!inherits(model, "combo_model")) {
         cli::cli_abort("model must be constructed by combo_model()")
     }
+    type <- match.arg(type)
     if (!is_positive_integer(draws)) {
         cli::cli_abort("draws must be integer-valued and at least 1")
     }
@@ -63,7 +81,7 @@ prior_predict <- function(
         seed <- as.integer(seed)
     }
 
-    alpha <- combo_prior_intercept(model, data, intercept)
+    alpha <- prior_intercept(model, data, intercept)
     design <- data
     if (inherits(design, "data.frame")) {
         design$response <- NULL
@@ -74,6 +92,7 @@ prior_predict <- function(
         cell_data = cell_data,
         compound_data = compound_data
     )
+    beta_offset <- prior_resolve_beta_offsets(compiled, beta_offset)
 
     if (!is.null(seed)) {
         set.seed(seed)
@@ -91,22 +110,26 @@ prior_predict <- function(
         dimnames = list(NULL, as.character(indices$row_id))
     )
     for (draw in seq_len(draws)) {
-        snapshot <- combo_prior_snapshot(compiled, alpha)
+        snapshot <- prior_snapshot(compiled, alpha, beta_offset)
         expected <- predict_combo_draw(
             snapshot,
             indices = indices,
             rank = model$rank
         )
-        result[draw, ] <- stats::rnorm(
-            length(expected),
-            mean = expected,
-            sd = 1 / sqrt(snapshot$precision)
-        )
+        result[draw, ] <- if (type == "mean") {
+            expected
+        } else {
+            stats::rnorm(
+                length(expected),
+                mean = expected,
+                sd = 1 / sqrt(snapshot$precision)
+            )
+        }
     }
     result
 }
 
-combo_prior_intercept <- function(model, data, intercept) {
+prior_intercept <- function(model, data, intercept) {
     specification <- model$global_intercept
     if (specification$type == "fixed") {
         if (!is.null(intercept)) {
@@ -142,63 +165,135 @@ combo_prior_intercept <- function(model, data, intercept) {
     mean(observed)
 }
 
-combo_prior_snapshot <- function(compiled, alpha) {
-    precision_prior <- compiled$observation_prior
-    components <- lapply(compiled$components, combo_draw_component_prior)
+prior_resolve_beta_offsets <- function(compiled, beta_offset) {
+    offset_components <- c("cell_offset", "treatment_offset")
+    if (!is.list(beta_offset)) {
+        cli::cli_abort("beta_offset must be a named list")
+    }
+    offset_names <- names(beta_offset)
+    if (length(beta_offset) &&
+            (is.null(offset_names) || is_invalid_key(offset_names))) {
+        cli::cli_abort("beta_offset must have unique, nonempty names")
+    }
+    unknown <- setdiff(offset_names, offset_components)
+    if (length(unknown)) {
+        cli::cli_abort("beta_offset contains unknown entries: {.and {unknown}}")
+    }
+
+    result <- lapply(compiled$components, function(component) {
+        if (is.null(component)) {
+            return(numeric())
+        }
+        coefficient_names <- colnames(component$mean$X)
+        stats::setNames(numeric(length(coefficient_names)), coefficient_names)
+    })
+    for (component_name in offset_components) {
+        value <- if (component_name %in% offset_names) {
+            beta_offset[[component_name]]
+        } else {
+            0
+        }
+        coefficient_names <- names(result[[component_name]])
+        result[[component_name]] <- prior_resolve_beta_offset(
+            value,
+            coefficient_names,
+            component_name
+        )
+    }
+    result
+}
+
+prior_resolve_beta_offset <- function(
+    value,
+    coef_names,
+    offset_name
+) {
+    valid_value <- is.numeric(value) && is.null(dim(value)) &&
+        length(value) > 0L && !anyNA(value) && all(is.finite(value))
+    if (!valid_value) {
+        cli::cli_abort(
+            "beta_offset {offset_name} must be a finite numeric scalar or named vector"
+        )
+    }
+
+    value_names <- names(value)
+    if (is.null(value_names)) {
+        if (length(value) != 1L) {
+            cli::cli_abort("beta_offset {offset_name} must be scalar or have coefficient names")
+        }
+        if (!length(coef_names) && value != 0) {
+            cli::cli_abort(
+                "beta_offset {offset_name} is nonzero but its component has no coefficients"
+            )
+        }
+        return(stats::setNames(
+            rep(as.numeric(value), length(coef_names)),
+            coef_names
+        ))
+    }
+    if (is_invalid_key(value_names)) {
+        cli::cli_abort(
+            "beta_offset {offset_name} must have unique, nonempty coefficient names"
+        )
+    }
+    unknown <- setdiff(value_names, coef_names)
+    if (length(unknown)) {
+        cli::cli_abort(
+            "beta_offset {offset_name} has unknown coefficients: {.and {unknown}}"
+        )
+    }
+    result <- stats::setNames(numeric(length(coef_names)), coef_names)
+    result[value_names] <- as.numeric(value)
+    result
+}
+
+prior_snapshot <- function(compiled, alpha, beta_offset) {
+    precision <- with(
+        compiled$observation_prior,
+        if (type == "fixed") precision else stats::rgamma(1L, shape = shape, rate = rate)
+    )
+    component_names <- names(compiled$components)
+    components <- lapply(
+        component_names,
+        function(name) prior_draw_component(compiled$components[[name]], beta_offset[[name]])
+    )
+    names(components) <- component_names
     list(
         alpha = alpha,
-        precision = stats::rgamma(
-            1L,
-            shape = precision_prior$shape,
-            rate = precision_prior$rate
-        ),
+        precision = precision,
         components = components
     )
 }
 
-combo_draw_component_prior <- function(compiled) {
+prior_draw_component <- function(compiled, beta_offset) {
     if (is.null(compiled)) {
         return(NULL)
     }
     n_entities <- compiled$n_entities
     n_dimensions <- compiled$n_dimensions
-    mean_state <- combo_draw_mean_prior(compiled$mean)
-    shrinkage <- combo_draw_shrinkage_prior(
+    mean_state <- prior_draw_mean(compiled$mean, beta_offset)
+    shrinkage <- prior_draw_shrinkage(
         compiled$shrinkage,
         n_entities,
         n_dimensions
     )
-    raw <- combo_draw_structured_prior(
+    draw <- prior_draw(
         compiled$structure,
         shrinkage,
-        n_dimensions
-    )
-    values <- sweep(
-        raw[compiled$structure$modeled_index, , drop = FALSE],
-        1L,
-        compiled$structure$modeled_scale,
-        "/"
-    )
-    values <- values + mean_state$value
-    dimnames(values) <- list(
-        compiled$structure$entity_names,
-        if (n_dimensions > 1L) {
-            paste0("dim_", seq_len(n_dimensions))
-        } else {
-            "value"
-        }
+        n_dimensions,
+        mean_state$value
     )
     list(
-        value = values,
+        value = draw$value,
         beta = mean_state$beta,
-        mean_precision = mean_state$precision,
+        beta_precision = mean_state$precision,
         global_precision = shrinkage$global,
         local_precision = shrinkage$local,
-        raw = raw
+        raw = draw$raw
     )
 }
 
-combo_draw_mean_prior <- function(mean) {
+prior_draw_mean <- function(mean, beta_offset) {
     n_coef <- ncol(mean$X)
     if (!n_coef) {
         return(list(
@@ -207,14 +302,14 @@ combo_draw_mean_prior <- function(mean) {
             value = numeric(nrow(mean$X))
         ))
     }
-    spec <- mean$shrinkage
+    spec <- mean$beta_precision
     precision <- if (spec$type == "fixed") {
         spec$precision
     } else {
         stats::rgamma(1L, shape = spec$shape, rate = spec$rate)
     }
 
-    beta <- stats::rnorm(n_coef, sd = 1 / sqrt(precision))
+    beta <- stats::rnorm(n_coef, mean = beta_offset, sd = 1 / sqrt(precision))
     names(beta) <- colnames(mean$X)
     list(
         beta = beta,
@@ -223,7 +318,7 @@ combo_draw_mean_prior <- function(mean) {
     )
 }
 
-combo_draw_shrinkage_prior <- function(
+prior_draw_shrinkage <- function(
     specification,
     n_entities,
     n_dimensions
@@ -266,7 +361,7 @@ combo_draw_shrinkage_prior <- function(
     result
 }
 
-combo_draw_structured_prior <- function(
+prior_draw_structure <- function(
     structure,
     shrinkage,
     n_dimensions
@@ -297,4 +392,15 @@ combo_draw_structured_prior <- function(
     }
     dimnames(raw) <- list(structure$nodes, NULL)
     raw
+}
+
+prior_draw <- function(structure, shrinkage, n_dim, mean = 0) {
+    raw <- prior_draw_structure(structure, shrinkage, n_dim)
+    value <- raw[structure$modeled_index, , drop = FALSE] / structure$modeled_scale
+    value <- value + mean
+    dimnames(value) <- list(
+        structure$entity_names,
+        if (n_dim > 1L) paste0("dim_", seq_len(n_dim)) else "value"
+    )
+    list(value = value, raw = raw)
 }

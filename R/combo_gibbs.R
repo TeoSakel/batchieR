@@ -265,7 +265,7 @@ gibbs_update_hyperparameters <- function(state) {
         component <- state$components[[name]]
         component <- gibbs_update_beta(component)
         component <- gibbs_update_shrinkage(component, length(state$y))
-        component <- gibbs_update_mean_shrinkage(component)
+        component <- gibbs_update_beta_precision(component)
         state$components[[name]] <- component
     }
     state
@@ -289,7 +289,7 @@ gibbs_update_beta <- function(component) {
     z[structure$modeled_index, 1L] <-
         z[structure$modeled_index, 1L] +
         scale * as.numeric(X %*% component$beta)
-    prior_precision <- component$mean_shrinkage$precision
+    prior_precision <- component$beta_precision$precision
     if (!is.null(component$shrinkage$local)) {
         weights <- component$shrinkage$global[1L] *
             component$shrinkage$local[, 1L]
@@ -436,13 +436,13 @@ gibbs_update_shrinkage <- function(component, n_observations) {
     component
 }
 
-gibbs_update_mean_shrinkage <- function(component) {
+gibbs_update_beta_precision <- function(component) {
     if (is.null(component) || !length(component$beta) ||
-            component$mean_shrinkage$spec$type == "fixed") {
+            component$beta_precision$spec$type == "fixed") {
         return(component)
     }
-    spec <- component$mean_shrinkage$spec
-    component$mean_shrinkage$precision <- stats::rgamma(
+    spec <- component$beta_precision$spec
+    component$beta_precision$precision <- stats::rgamma(
         1L,
         shape = spec$shape + 0.5 * length(component$beta),
         rate = spec$rate + 0.5 * sum(component$beta^2)
@@ -473,10 +473,10 @@ gibbs_snapshot <- function(state) {
         list(
             value = component[["values"]],
             beta = component[["beta"]],
-            mean_precision = if (is.null(component[["mean_shrinkage"]])) {
+            beta_precision = if (is.null(component[["beta_precision"]])) {
                 NULL
             } else {
-                component[["mean_shrinkage"]][["precision"]]
+                component[["beta_precision"]][["precision"]]
             },
             global_precision = component[["shrinkage"]][["global"]],
             local_precision = component[["shrinkage"]][["local"]],

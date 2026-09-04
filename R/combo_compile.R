@@ -153,7 +153,7 @@ combo_compile_mean <- function(component, metadata, label) {
             center = numeric(),
             scale = numeric(),
             formula = component$mean,
-            shrinkage = NULL
+            beta_precision = NULL
         ))
     }
 
@@ -196,7 +196,7 @@ combo_compile_mean <- function(component, metadata, label) {
         center = center,
         scale = scale,
         formula = component$mean,
-        shrinkage = component$mean_shrinkage
+        beta_precision = component$beta_precision
     )
 }
 

@@ -2,7 +2,7 @@
 % Please edit documentation in R/combo_prior.R
 \name{prior_predict}
 \alias{prior_predict}
-\title{Draw prior-predictive responses}
+\title{Draw predictions from the prior}
 \usage{
 prior_predict(
   model,
@@ -11,7 +11,9 @@ prior_predict(
   compound_data = NULL,
   draws = 100L,
   seed = NULL,
-  intercept = NULL
+  intercept = NULL,
+  type = c("response", "mean"),
+  beta_offset = list(cell_offset = 0, treatment_offset = 0)
 )
 }
 \arguments{
@@ -21,11 +23,9 @@ prior_predict(
 and \code{dose_2} design columns. An optional numeric \code{response} column is used
 only as described for \code{intercept}.}
 
-\item{cell_data}{An optional data frame of cell-level covariates, as for
-\code{\link[=fit_combo]{fit_combo()}}.}
+\item{cell_data}{An optional data frame of cell-level covariates.}
 
-\item{compound_data}{An optional data frame of compound-level covariates, as
-for \code{\link[=fit_combo]{fit_combo()}}.}
+\item{compound_data}{An optional data frame of compound-level covariates.}
 
 \item{draws}{Number of prior-predictive draws. Must be a positive integer.}
 
@@ -37,18 +37,33 @@ finite numeric value for the global intercept. It takes precedence over
 the mean of nonmissing responses. If neither is available, an error is
 raised. This argument must be \code{NULL} when the model uses
 \code{\link[=fixed_intercept]{fixed_intercept()}}.}
+
+\item{type}{Whether to draw replicated \code{response} values including observation
+noise, or latent conditional \code{mean} values.}
+
+\item{beta_offset}{A named list with optional \code{cell_offset} and
+\code{treatment_offset} entries giving prior means for coefficients in the
+cell-offset and treatment-offset mean formulas, respectively.}
 }
 \value{
-A numeric matrix with one row per draw and one column per input
-design row, matching the shape and column naming convention of
-\code{\link[=posterior_predict]{posterior_predict()}}.
+A numeric matrix with one row per draw and one column per input design row.
+With \code{type = "response"}, it matches the shape and column naming convention
+of \code{\link[=posterior_predict]{posterior_predict()}}; with \code{type = "mean"}, it contains latent conditional means.
 }
 \description{
-Draws replicated responses from the generative prior defined by a
-\code{\link[=combo_model]{combo_model()}}. The design and metadata inputs follow \code{\link[=fit_combo]{fit_combo()}}, but a
-\code{response} column is optional. Responses do not otherwise condition the
-draws; for a model using \code{\link[=empirical_intercept]{empirical_intercept()}}, their only possible use is
-to supply the fallback intercept.
+Draws latent conditional means or replicated responses from the generative prior defined by a \code{\link[=combo_model]{combo_model()}}.
+}
+\details{
+Each \code{beta_offset} entry may be an unnamed numeric scalar, which is recycled,
+or a named numeric vector matched to compiled coefficient names. Omitted
+coefficients and list entries default to zero. A nonzero or named entry
+requires the corresponding component to have coefficients.
+
+Formula-generated model-matrix columns are centered and scaled to unit sample
+standard deviation before coefficients are applied. \code{beta_offset} therefore
+operates on this standardized design scale, not on raw covariates. For an
+ordinary numeric covariate, one coefficient unit is the effect of a one-standard-
+deviation increase, holding the other design columns fixed.
 }
 \examples{
 design <- data.frame(

@@ -100,10 +100,19 @@ test_that("the default latent-factor model fits every component", {
 })
 
 test_that("fit_combo compiles cell and compound metadata means", {
-    mean_component <- function() {
+    expect_error(
         combo_gaussian_component(
             mean = ~ 0 + feature,
             mean_shrinkage = fixed_scale(),
+            shrinkage = fixed_scale()
+        ),
+        "unused argument"
+    )
+
+    mean_component <- function() {
+        combo_gaussian_component(
+            mean = ~ 0 + feature,
+            beta_precision = fixed_scale(),
             shrinkage = fixed_scale()
         )
     }
@@ -115,6 +124,12 @@ test_that("fit_combo compiles cell and compound metadata means", {
         treatment_main_factors = NULL,
         treatment_interaction_factors = NULL
     )
+    expect_named(
+        model$components$cell_offset,
+        c("mean", "beta_precision", "structure", "shrinkage")
+    )
+    expect_false("mean_shrinkage" %in% names(model$components$cell_offset))
+
     cell_data <- data.frame(cell = c("A", "B"), feature = c(-1, 1))
     compound_data <- data.frame(drug = c("X", "Y"), feature = c(0, 1))
     fit <- fit_combo(
@@ -132,6 +147,18 @@ test_that("fit_combo compiles cell and compound metadata means", {
     expect_identical(fit$input$compound_data, compound_data)
     expect_named(fit$draws[[1L]]$components$cell_offset$beta, "feature")
     expect_named(fit$draws[[1L]]$components$treatment_offset$beta, "feature")
+    expect_equal(fit$draws[[1L]]$components$cell_offset$beta_precision, 1)
+    expect_false(
+        "mean_precision" %in% names(fit$draws[[1L]]$components$cell_offset)
+    )
+    map <- parameter_map(fit)
+    expect_true(any(map$parameter == "beta_precision"))
+    expect_false(any(map$parameter == "mean_precision"))
+    expect_true("cell_offset_beta_precision" %in% map$variable)
+    draws <- posterior_draws(fit)
+    expect_true(
+        "cell_offset_beta_precision" %in% dimnames(draws)$variable
+    )
 })
 
 test_that("fit_combo validates parallel and progress controls", {

@@ -28,3 +28,6 @@ construct_gmrf_precision <- function(spec, entity_names, label) {
         modeled_scale = rep(1, length(entity_names))
     )
 }
+
+# TODO: implement graph_laplacian() to construct a GMRF operator from a graph adjacency matrix.
+#       then either gmrf_from_graph() of gmrf.graph() for igraph objects can be implemented to construct a GMRF prior from a graph.
