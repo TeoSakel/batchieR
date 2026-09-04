@@ -7,7 +7,7 @@
 \usage{
 combo_model(
   rank = 2L,
-  global_intercept = empirical_intercept(),
+  mean = empirical_mean(),
   cell_offset = combo_gaussian_component(shrinkage = gamma_precision(shape = 1.1, rate =
     1.1)),
   cell_factors = combo_gaussian_component(shrinkage = multiplicative_gamma(shape = 2,
@@ -29,8 +29,8 @@ combo_model(
 \item{rank}{Positive integer shared latent dimension of \code{cell_factors},
 \code{treatment_main_factors}, and \code{treatment_interaction_factors}.}
 
-\item{global_intercept}{Overall response-level specification; see
-\link{intercept_specifications}.}
+\item{mean}{Overall response mean or fixed-effect regression; see
+\link{mean_specifications}.}
 
 \item{cell_offset}{Component for cell-specific baselines (\code{W0}), or \code{NULL}.}
 
@@ -63,13 +63,13 @@ Defines the terms of the Bayesian latent-factor model fitted by \code{\link[=fit
 For cell \code{k} and treatments \code{i} and \code{j}, the linear predictor is
 }
 \details{
-\if{html}{\out{<div class="sourceCode">}}\preformatted{eta[k, i, j] = alpha + W0[k] + V0[i] + V0[j] +
+\if{html}{\out{<div class="sourceCode">}}\preformatted{fitted_mean[k, i, j] = intercept + W0[k] + V0[i] + V0[j] +
     dot(W[k, ], V1[i, ] + V1[j, ] + V2[i, ] * V2[j, ])
 }\if{html}{\out{</div>}}
 
 where \code{*} denotes element-wise multiplication. The terms are:
 \itemize{
-\item \code{global_intercept} (\code{alpha}): the overall response level.
+\item \code{mean}: the global mean or metadata regression; see \link{mean_specifications}.
 \item \code{cell_offset} (\code{W0}): baseline differences among cellular contexts.
 \item \code{treatment_offset} (\code{V0}): additive treatment effects shared across contexts.
 \item \code{cell_factors} (\code{W}): latent characteristics of each cellular context.
@@ -83,9 +83,11 @@ effects. Two treatments are multiplied in latent space and projected onto
 A single-treatment row has no second-treatment or interaction contribution.
 Treatment order does not change the predictor. Setting a component to \code{NULL}
 removes its term; treatment factor terms require \code{cell_factors}.
+When \code{mean} uses a formula, enabled offsets remain zero-centered residual
+entity deviations around that regression.
 
 See \code{\link[=combo_gaussian_component]{combo_gaussian_component()}} for configuring each component. The remaining model
-specifications are described in \link{intercept_specifications},
+specifications are described in \link{mean_specifications},
 \link{dose_specifications}, and \code{\link[=gaussian_response]{gaussian_response()}}.
 }
 \examples{

@@ -19,11 +19,11 @@
 #' @param data A data frame of combination-screen observations. See Details for
 #'   the required columns.
 #' @param cell_data An optional data frame of cell-level covariates, containing a
-#'   unique, nonmissing `cell` key and any covariates used by cell-component
-#'   mean formulas.
+#'   unique, nonmissing `cell` key and any covariates used by the global mean
+#'   formula.
 #' @param compound_data An optional data frame of compound-level covariates,
 #'   containing a unique, nonmissing `drug` key and any covariates used by
-#'   treatment-component mean formulas.
+#'   the global mean formula.
 #' @param engine Sampling engine. Currently only `"gibbs"` is supported.
 #' @param chains Number of independent Markov chains. Must be a positive integer.
 #' @param iter_warmup Number of warmup transitions per chain. Must be a

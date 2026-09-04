@@ -5,27 +5,32 @@ init_gibbs_state <- function(compiled) {
         cli::cli_abort("compiled must be a compiled_combo_model")
     }
     components <- lapply(compiled$components, init_component_state)
-    structure(
+    beta <- compiled$mean$beta_mean
+    state <- structure(
         list(
             compiled = compiled,
             y = compiled$response,
             cell = compiled$cell,
             treatment_1 = compiled$treatment_1,
             treatment_2 = compiled$treatment_2,
-            alpha = compiled$alpha,
+            intercept = compiled$intercept,
+            beta = beta,
             precision = 100,
             components = components,
-            Mu = rep(compiled$alpha, length(compiled$response)),
+            fitted_mean = rep(compiled$intercept, length(compiled$response)),
             n_steps = 0L,
             last_rmse = NA_real_
         ),
         class = "combo_gibbs_state"
     )
+    state$fitted_mean <- gibbs_reconstruct_mean(state)
+    state
 }
 
 gibbs_step <- function(state) {
     state$n_steps <- state$n_steps + 1L
-    state$Mu <- gibbs_reconstruct_mean(state)
+    state$fitted_mean <- gibbs_reconstruct_mean(state)
+    state <- gibbs_update_mean(state)
     state <- gibbs_update_cell_offset(state)
     state <- gibbs_update_treatment_offset(state)
     state <- gibbs_update_cell_factors(state)
@@ -37,7 +42,14 @@ gibbs_step <- function(state) {
 
 gibbs_reconstruct_mean <- function(state) {
     n <- length(state$y)
-    mu <- rep(state$alpha, n)
+    mu <- rep(state$intercept, n)
+    if (length(state$beta)) {
+        slope_design <- state$compiled$mean$observed_design[
+            , state$compiled$mean$coefficient_names,
+            drop = FALSE
+        ]
+        mu <- mu + as.numeric(slope_design %*% state$beta)
+    }
     W0 <- state$components$cell_offset
     if (!is.null(W0)) mu <- mu + W0$values[state$cell, 1L]
     V0 <- state$components$treatment_offset
@@ -65,6 +77,45 @@ gibbs_reconstruct_mean <- function(state) {
     mu
 }
 
+gibbs_update_mean <- function(state) {
+    if (state$compiled$mean$type != "formula") return(state)
+    X <- state$compiled$mean$observed_design
+    if (!ncol(X)) return(state)
+    current <- if (state$compiled$mean$has_intercept) {
+        c(`(Intercept)` = state$intercept, state$beta)
+    } else {
+        state$beta
+    }
+    prior_precision <- state$compiled$mean$beta_precision
+    prior_linear <- as.numeric(prior_precision %*% state$compiled$mean$beta_mean)
+    if (state$compiled$mean$has_intercept) {
+        augmented <- matrix(0, nrow(prior_precision) + 1L,
+                            ncol(prior_precision) + 1L)
+        if (nrow(prior_precision)) {
+            augmented[-1L, -1L] <- prior_precision
+        }
+        prior_precision <- augmented
+        prior_linear <- c(0, prior_linear)
+    }
+    old_contribution <- as.numeric(X %*% current)
+    residual <- state$y - state$fitted_mean + old_contribution
+    precision <- state$precision * crossprod(X) + prior_precision
+    linear <- state$precision * as.numeric(crossprod(X, residual)) + prior_linear
+    value <- stats::setNames(
+        rmvnorm_safe(precision, linear, current, "mean coefficient update"),
+        names(current)
+    )
+    state$fitted_mean <- state$fitted_mean +
+        as.numeric(X %*% (value - current))
+    if (state$compiled$mean$has_intercept) {
+        state$intercept <- unname(value["(Intercept)"])
+        state$beta <- value[-1L]
+    } else {
+        state$beta <- value
+    }
+    state
+}
+
 gibbs_update_cell_offset <- function(state) {
     component <- state$components$cell_offset
     if (is.null(component)) {
@@ -78,14 +129,14 @@ gibbs_update_cell_offset <- function(state) {
         precision <- prior$precision
         linear <- prior$linear
         if (length(idx)) {
-            residual <- state$y[idx] - state$Mu[idx] + old
+            residual <- state$y[idx] - state$fitted_mean[idx] + old
             precision <- precision + state$precision * length(idx)
             linear <- linear + state$precision * sum(residual)
         }
         value <- stats::rnorm(1L, linear / precision, 1 / sqrt(precision))
         component <- combo_store_entity(component, entity, value, prior)
         if (length(idx)) {
-            state$Mu[idx] <- state$Mu[idx] + value - old
+            state$fitted_mean[idx] <- state$fitted_mean[idx] + value - old
         }
     }
     state$components$cell_offset <- component
@@ -107,14 +158,14 @@ gibbs_update_treatment_offset <- function(state) {
         linear <- prior$linear
         if (length(idx)) {
             x <- coefficient[idx]
-            residual <- state$y[idx] - state$Mu[idx] + x * old
+            residual <- state$y[idx] - state$fitted_mean[idx] + x * old
             precision <- precision + state$precision * sum(x^2)
             linear <- linear + state$precision * sum(x * residual)
         }
         value <- stats::rnorm(1L, linear / precision, 1 / sqrt(precision))
         component <- combo_store_entity(component, entity, value, prior)
         if (length(idx)) {
-            state$Mu[idx] <- state$Mu[idx] + x * (value - old)
+            state$fitted_mean[idx] <- state$fitted_mean[idx] + x * (value - old)
         }
     }
     state$components$treatment_offset <- component
@@ -137,7 +188,7 @@ gibbs_update_cell_factors <- function(state) {
         if (length(idx)) {
             x <- combo_factor_design_for_cell(state, idx)
             old_contribution <- as.numeric(x %*% old)
-            residual <- state$y[idx] - state$Mu[idx] + old_contribution
+            residual <- state$y[idx] - state$fitted_mean[idx] + old_contribution
             precision <- precision + state$precision * crossprod(x)
             linear <- linear +
                 state$precision * as.numeric(crossprod(x, residual))
@@ -150,7 +201,7 @@ gibbs_update_cell_factors <- function(state) {
         )
         component <- combo_store_entity(component, entity, value, prior)
         if (length(idx)) {
-            state$Mu[idx] <- state$Mu[idx] +
+            state$fitted_mean[idx] <- state$fitted_mean[idx] +
                 as.numeric(x %*% value) - old_contribution
         }
     }
@@ -176,7 +227,7 @@ gibbs_update_treatment_factors <- function(state) {
         if (length(idx)) {
             x <- W$values[state$cell[idx], , drop = FALSE] * coefficient[idx]
             old_contribution <- as.numeric(x %*% old)
-            residual <- state$y[idx] - state$Mu[idx] + old_contribution
+            residual <- state$y[idx] - state$fitted_mean[idx] + old_contribution
             precision <- precision + state$precision * crossprod(x)
             linear <- linear +
                 state$precision * as.numeric(crossprod(x, residual))
@@ -189,7 +240,7 @@ gibbs_update_treatment_factors <- function(state) {
         )
         component <- combo_store_entity(component, entity, value, prior)
         if (length(idx)) {
-            state$Mu[idx] <- state$Mu[idx] +
+            state$fitted_mean[idx] <- state$fitted_mean[idx] +
                 as.numeric(x %*% value) - old_contribution
         }
     }
@@ -237,8 +288,8 @@ gibbs_update_interactions <- function(state) {
             x <- rbind(x1, x2)
             old_contribution <- as.numeric(x %*% old)
             residual <- c(
-                state$y[idx1] - state$Mu[idx1],
-                state$y[idx2] - state$Mu[idx2]
+                state$y[idx1] - state$fitted_mean[idx1],
+                state$y[idx2] - state$fitted_mean[idx2]
             ) + old_contribution
             precision <- precision + state$precision * crossprod(x)
             linear <- linear +
@@ -252,7 +303,7 @@ gibbs_update_interactions <- function(state) {
         )
         component <- combo_store_entity(component, entity, value, prior)
         if (length(idx)) {
-            state$Mu[idx] <- state$Mu[idx] +
+            state$fitted_mean[idx] <- state$fitted_mean[idx] +
                 as.numeric(x %*% value) - old_contribution
         }
     }
@@ -263,64 +314,10 @@ gibbs_update_interactions <- function(state) {
 gibbs_update_hyperparameters <- function(state) {
     for (name in names(state$components)) {
         component <- state$components[[name]]
-        component <- gibbs_update_beta(component)
         component <- gibbs_update_shrinkage(component, length(state$y))
-        component <- gibbs_update_beta_precision(component)
         state$components[[name]] <- component
     }
     state
-}
-
-gibbs_update_beta <- function(component) {
-    if (is.null(component) || !length(component$beta)) {
-        return(component)
-    }
-    compiled <- component$compiled
-    structure <- compiled$structure
-    X <- compiled$mean$X
-    scale <- structure$modeled_scale
-    A <- matrix(
-        0,
-        nrow = length(structure$nodes),
-        ncol = ncol(X)
-    )
-    A[structure$modeled_index, ] <- X * scale
-    z <- component$raw
-    z[structure$modeled_index, 1L] <-
-        z[structure$modeled_index, 1L] +
-        scale * as.numeric(X %*% component$beta)
-    prior_precision <- component$beta_precision$precision
-    if (!is.null(component$shrinkage$local)) {
-        weights <- component$shrinkage$global[1L] *
-            component$shrinkage$local[, 1L]
-        A_leaf <- A[structure$modeled_index, , drop = FALSE]
-        z_leaf <- z[structure$modeled_index, 1L]
-        precision <- crossprod(A_leaf, A_leaf * weights) +
-            diag(prior_precision, ncol(A_leaf))
-        linear <- as.numeric(crossprod(A_leaf, weights * z_leaf))
-    } else {
-        lambda <- component$shrinkage$global[1L]
-        precision <- lambda *
-            crossprod(A, as.matrix(structure$Q %*% A)) +
-            diag(prior_precision, ncol(A))
-        linear <- lambda * as.numeric(
-            crossprod(A, as.numeric(structure$Q %*% z[, 1L]))
-        )
-    }
-    component$beta <- stats::setNames(
-        rmvnorm_safe(
-            precision,
-            linear,
-            component$beta,
-            paste0(compiled$name, " mean coefficient update")
-        ),
-        names(component$beta)
-    )
-    component$mean_value <- as.numeric(
-        component$compiled$mean$X %*% component$beta
-    )
-    component <- combo_sync_component_raw(component)
-    component
 }
 
 gibbs_update_shrinkage <- function(component, n_observations) {
@@ -436,23 +433,9 @@ gibbs_update_shrinkage <- function(component, n_observations) {
     component
 }
 
-gibbs_update_beta_precision <- function(component) {
-    if (is.null(component) || !length(component$beta) ||
-            component$beta_precision$spec$type == "fixed") {
-        return(component)
-    }
-    spec <- component$beta_precision$spec
-    component$beta_precision$precision <- stats::rgamma(
-        1L,
-        shape = spec$shape + 0.5 * length(component$beta),
-        rate = spec$rate + 0.5 * sum(component$beta^2)
-    )
-    component
-}
-
 gibbs_update_obs_precision <- function(state, eps = 1e-3) {
     n_obs <- length(state$y)
-    rss <- as.numeric(crossprod(state$y - state$Mu))
+    rss <- as.numeric(crossprod(state$y - state$fitted_mean))
     prior <- state$compiled$observation_prior
     shape_post <- prior$shape + 0.5 * n_obs
     rate_post <- prior$rate + 0.5 * rss
@@ -472,22 +455,17 @@ gibbs_snapshot <- function(state) {
         }
         list(
             value = component[["values"]],
-            beta = component[["beta"]],
-            beta_precision = if (is.null(component[["beta_precision"]])) {
-                NULL
-            } else {
-                component[["beta_precision"]][["precision"]]
-            },
             global_precision = component[["shrinkage"]][["global"]],
             local_precision = component[["shrinkage"]][["local"]],
             raw = component[["raw"]]
         )
     })
     list(
-        alpha = state$alpha,
+        intercept = state$intercept,
+        beta = state$beta,
         precision = state$precision,
         components = values,
-        Mu = state$Mu,
+        fitted_mean = state$fitted_mean,
         last_rmse = state$last_rmse,
         n_steps = state$n_steps
     )
@@ -503,13 +481,12 @@ combo_entity_prior <- function(component, entity) {
         if (!is.null(component$shrinkage$local)) {
             lambda <- lambda * component$shrinkage$local[entity, ]
         }
-        mean <- component$mean_value[entity]
         return(list(
             precision = lambda,
-            linear = lambda * mean,
+            linear = rep(0, length(lambda)),
             node = entity,
             scale = 1,
-            mean = mean
+            mean = 0
         ))
     }
     node <- structure$modeled_index[entity]
@@ -520,13 +497,12 @@ combo_entity_prior <- function(component, entity) {
     }
     precision <- lambda * structure$diagonal[node] * scale^2
     linear_delta <- -lambda * combo_neighbor_sum(component, node) * scale
-    mean <- component[["mean_value"]][entity]
     list(
         precision = precision,
-        linear = linear_delta + precision * mean,
+        linear = linear_delta,
         node = node,
         scale = scale,
-        mean = mean
+        mean = 0
     )
 }
 
@@ -544,14 +520,6 @@ combo_update_latent <- function(component) {
             sd = 1 / sqrt(lambda * diagonal)
         )
     }
-    component
-}
-
-combo_sync_component_raw <- function(component) {
-    idx <- component[["compiled"]][["structure"]][["modeled_index"]]
-    scale <- component[["compiled"]][["structure"]][["modeled_scale"]]
-    residual <- component[["values"]] - component[["mean_value"]]
-    component[["raw"]][idx, ] <- residual * scale
     component
 }
 

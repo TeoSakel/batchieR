@@ -51,6 +51,6 @@ to additionally include raw nodes, fitted means, and sampler diagnostics.}
 \description{
 Converts retained Gibbs snapshots to a numeric iterations-by-chains-by-variables
 array. Public variables include the intercept, observation scale and precision,
-enabled component values, mean coefficients, and shrinkage precisions. Use the
+enabled component values, global mean coefficients, and shrinkage precisions. Use the
 \verb{posterior::as_draws*()} methods when a \code{posterior} draws format is required.
 }

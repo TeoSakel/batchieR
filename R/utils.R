@@ -40,16 +40,6 @@ param_positive_integer <- function(x, label) {
     as.integer(x)
 }
 
-formula_has_terms <- function(formula) {
-    terms <- stats::terms(formula)
-    length(attr(terms, "term.labels")) > 0L || attr(terms, "intercept") != 0L
-}
-
-formula_is_zero <- function(formula) {
-    !formula_has_terms(formula)
-}
-
-
 clip <- function(x, lower = -Inf, upper = Inf) {
     if (any(lower > upper)) {
         cli::cli_abort("lower must be less than or equal to upper")

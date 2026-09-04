@@ -15,8 +15,8 @@ test_that("posterior draws and parameter maps share a stable schema", {
         )
     )
 
-    selected <- posterior_draws(fit, variable = c("alpha", "sigma"))
-    expect_identical(dimnames(selected)$variable, c("alpha", "sigma"))
+    selected <- posterior_draws(fit, variable = c("intercept", "sigma"))
+    expect_identical(dimnames(selected)$variable, c("intercept", "sigma"))
 
     component <- posterior_draws(fit, components = "cell_offset")
     expect_true(all(grepl("^cell_offset", dimnames(component)$variable)))
@@ -32,7 +32,7 @@ test_that("posterior draw selection rejects malformed requests and fits", {
     fit <- combo_test_fit()
 
     expect_error(
-        posterior_draws(fit, components = "cell_offset", variable = "alpha"),
+        posterior_draws(fit, components = "cell_offset", variable = "intercept"),
         "mutually exclusive"
     )
     expect_error(posterior_draws(fit, components = "unknown"), "Unknown components")

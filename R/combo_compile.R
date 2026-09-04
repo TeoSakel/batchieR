@@ -140,64 +140,429 @@ combo_treatment_metadata <- function(treatments, compound_data) {
     base
 }
 
-combo_compile_mean <- function(component, metadata, label) {
-    if (formula_is_zero(component$mean)) {
-        values <- matrix(
-            numeric(),
-            nrow = nrow(metadata),
-            ncol = 0L,
-            dimnames = list(NULL, character())
+combo_mean_feature_names <- function(observation_data, cell_metadata,
+                                     compound_metadata) {
+    reserved <- c("response", "cell", "drug_1", "dose_1", "drug_2", "dose_2")
+    metadata_reserved <- list(
+        cell = intersect(setdiff(names(cell_metadata), "cell"), reserved),
+        compound = intersect(setdiff(names(compound_metadata), "drug"), reserved)
+    )
+    invalid_reserved <- unique(unlist(metadata_reserved, use.names = FALSE))
+    if (length(invalid_reserved)) {
+        cli::cli_abort(
+            "Mean metadata cannot reuse reserved observation columns: {.and {invalid_reserved}}"
         )
+    }
+    result <- list(
+        observation = setdiff(names(observation_data), reserved),
+        cell = setdiff(names(cell_metadata), "cell"),
+        compound = setdiff(names(compound_metadata), "drug")
+    )
+    for (source in names(result)) {
+        if (is_invalid_key(result[[source]])) {
+            cli::cli_abort("{source} mean-feature names must be unique and nonempty")
+        }
+    }
+    all_names <- unlist(result, use.names = FALSE)
+    collisions <- unique(all_names[duplicated(all_names)])
+    if (length(collisions)) {
+        cli::cli_abort(
+            "Mean-feature names must be unique across observation, cell, and compound data; conflicts: {.and {collisions}}"
+        )
+    }
+    result
+}
+
+combo_formula_term_source <- function(label, feature_names) {
+    variables <- all.vars(stats::as.formula(paste("~", label)))
+    sources <- names(feature_names)[vapply(
+        feature_names,
+        function(features) any(variables %in% features),
+        logical(1)
+    )]
+    unknown <- setdiff(variables, unlist(feature_names, use.names = FALSE))
+    if (length(unknown)) {
+        cli::cli_abort(
+            "Mean formula term {.code {label}} uses unknown variables: {.and {unknown}}"
+        )
+    }
+    if (length(sources) != 1L) {
+        cli::cli_abort(
+            "Mean formula term {.code {label}} must use variables from exactly one of observation, cell, or compound data"
+        )
+    }
+    sources
+}
+
+combo_compile_source_formula <- function(labels, data, environment, source,
+                                         has_intercept) {
+    if (!length(labels)) {
         return(list(
-            X = values,
-            center = numeric(),
-            scale = numeric(),
-            formula = component$mean,
-            beta_precision = NULL
+            X = matrix(numeric(), nrow(data), 0L),
+            encoder = NULL,
+            term_positions = integer()
         ))
     }
-
-    # Construct the design matrix and validate it.
+    formula <- stats::reformulate(
+        labels,
+        intercept = has_intercept,
+        env = environment
+    )
+    formula_terms <- stats::terms(formula)
     frame <- tryCatch(
-        stats::model.frame(
-            component$mean,
-            data = metadata,
-            na.action = stats::na.pass
-        ),
+        stats::model.frame(formula_terms, data, na.action = stats::na.pass),
         error = function(error) {
             cli::cli_abort(
-                "{label} mean formula could not be evaluated: {conditionMessage(error)}"
+                "{source} mean terms could not be evaluated: {conditionMessage(error)}"
             )
         }
     )
-    X <- stats::model.matrix(component$mean, data = frame)
-    if ("(Intercept)" %in% colnames(X)) {
-        cli::cli_abort("{label} mean formula may not contain an intercept")
-    }
+    X <- tryCatch(
+        stats::model.matrix(formula_terms, frame),
+        error = function(error) {
+            cli::cli_abort(
+                "{source} mean design could not be constructed: {conditionMessage(error)}"
+            )
+        }
+    )
     storage.mode(X) <- "double"
-    if (any(!is.finite(X))) {
-        cli::cli_abort("{label} mean design matrix contains missing or nonfinite values")
-    }
-    # Center and scale the design matrix
-    center <- colMeans(X)
-    centered <- sweep(X, 2L, center, `-`)
-    scale <- apply(centered, 2L, stats::sd)
-    if (any(!is.finite(scale)) || any(scale <= 0)) {
-        bad <- colnames(X)[!is.finite(scale) | scale <= 0] # Columns with zero variance
+    if (nrow(X) != nrow(data) || any(!is.finite(X))) {
         cli::cli_abort(
-            "{label} mean design contains constant columns: {.and {bad}}"
+            "{source} mean design contains missing or nonfinite values"
         )
     }
-    X <- sweep(centered, 2L, scale, `/`)
-    names(center) <- colnames(X)
-    names(scale) <- colnames(X)
+    assignments <- attr(X, "assign")
+    contrasts <- attr(X, "contrasts")
+    keep <- assignments != 0L
+    X <- X[, keep, drop = FALSE]
+    assignments <- assignments[keep]
+    local_labels <- attr(formula_terms, "term.labels")
     list(
         X = X,
-        center = center,
-        scale = scale,
-        formula = component$mean,
-        beta_precision = component$beta_precision
+        encoder = list(
+            terms = formula_terms,
+            contrasts = contrasts,
+            xlevels = lapply(
+                frame[vapply(frame, is.factor, logical(1))],
+                levels
+            ),
+            columns = colnames(X),
+            source = source
+        ),
+        term_positions = match(local_labels[assignments], labels)
     )
+}
+
+combo_apply_mean_encoder <- function(encoder, data) {
+    if (is.null(encoder)) {
+        return(matrix(numeric(), nrow(data), 0L))
+    }
+    frame <- tryCatch(
+        stats::model.frame(
+            encoder$terms,
+            data,
+            na.action = stats::na.pass,
+            xlev = encoder$xlevels
+        ),
+        error = function(error) {
+            cli::cli_abort(
+                "{encoder$source} mean terms could not be evaluated for prediction: {conditionMessage(error)}"
+            )
+        }
+    )
+    X <- tryCatch(
+        stats::model.matrix(
+            encoder$terms,
+            frame,
+            contrasts.arg = encoder$contrasts
+        ),
+        error = function(error) {
+            cli::cli_abort(
+                "{encoder$source} mean design could not be constructed for prediction: {conditionMessage(error)}"
+            )
+        }
+    )
+    storage.mode(X) <- "double"
+    if (nrow(X) != nrow(data) || any(!is.finite(X)) ||
+            !all(encoder$columns %in% colnames(X))) {
+        cli::cli_abort(
+            "{encoder$source} mean design is incompatible with the fitted model"
+        )
+    }
+    X[, encoder$columns, drop = FALSE]
+}
+
+combo_compile_beta_mean <- function(value, coefficient_names) {
+    if (length(value) == 1L && is.null(names(value))) {
+        return(stats::setNames(
+            rep(as.numeric(value), length(coefficient_names)),
+            coefficient_names
+        ))
+    }
+    if (is.null(names(value)) || is_invalid_key(names(value)) ||
+            !setequal(names(value), coefficient_names)) {
+        cli::cli_abort(
+            "Named beta_mean must contain exactly the mean coefficients: {.and {coefficient_names}}"
+        )
+    }
+    stats::setNames(
+        as.numeric(value[coefficient_names]),
+        coefficient_names
+    )
+}
+
+combo_compile_beta_precision <- function(value, coefficient_names) {
+    n_coef <- length(coefficient_names)
+    if (is.numeric(value) && is.null(dim(value))) {
+        if (anyNA(value) || any(!is.finite(value)) || any(value <= 0)) {
+            cli::cli_abort("beta_precision values must be finite and positive")
+        }
+        if (length(value) == 1L && is.null(names(value))) {
+            return(diag(as.numeric(value), n_coef))
+        }
+        if (is.null(names(value)) || is_invalid_key(names(value)) ||
+                !setequal(names(value), coefficient_names)) {
+            cli::cli_abort(
+                "Named beta_precision must contain exactly the mean coefficients: {.and {coefficient_names}}"
+            )
+        }
+        return(diag(as.numeric(value[coefficient_names]), n_coef))
+    }
+    precision <- as.matrix(value)
+    if (!is.numeric(precision) || nrow(precision) != ncol(precision) ||
+            anyNA(precision) || any(!is.finite(precision))) {
+        cli::cli_abort("beta_precision matrix must be square and finite")
+    }
+    row_names <- rownames(precision)
+    column_names <- colnames(precision)
+    valid_names <- !is.null(row_names) && !is.null(column_names) &&
+        !is_invalid_key(row_names) && identical(row_names, column_names) &&
+        setequal(row_names, coefficient_names)
+    if (!valid_names) {
+        cli::cli_abort(
+            "beta_precision matrix names must exactly match the mean coefficients: {.and {coefficient_names}}"
+        )
+    }
+    precision <- precision[coefficient_names, coefficient_names, drop = FALSE]
+    if (!isTRUE(all.equal(precision, t(precision), tolerance = 1e-12))) {
+        cli::cli_abort("beta_precision matrix must be symmetric")
+    }
+    tryCatch(
+        chol(precision),
+        error = function(error) {
+            cli::cli_abort("beta_precision matrix must be positive definite")
+        }
+    )
+    precision
+}
+
+combo_mean_source_design <- function(compiled, source, observation_data,
+                                     cell, treatment_1, treatment_2) {
+    definition <- compiled$sources[[source]]
+    if (source == "observation") {
+        return(combo_apply_mean_encoder(definition$encoder, observation_data))
+    }
+    if (source == "cell") {
+        return(definition$entity_X[cell, , drop = FALSE])
+    }
+    first <- matrix(0, nrow = length(treatment_1), ncol = ncol(definition$treatment_X))
+    second <- first
+    selected_1 <- treatment_1 > 0L
+    selected_2 <- treatment_2 > 0L
+    first[selected_1, ] <- definition$treatment_X[treatment_1[selected_1], , drop = FALSE]
+    second[selected_2, ] <- definition$treatment_X[treatment_2[selected_2], , drop = FALSE]
+    first + second
+}
+
+combo_assemble_mean_design <- function(compiled, observation_data, cell,
+                                       treatment_1, treatment_2) {
+    n <- nrow(observation_data)
+    X <- matrix(
+        0,
+        nrow = n,
+        ncol = length(compiled$coefficient_names),
+        dimnames = list(NULL, compiled$coefficient_names)
+    )
+    for (source in names(compiled$sources)) {
+        definition <- compiled$sources[[source]]
+        if (!length(definition$columns)) next
+        source_X <- combo_mean_source_design(
+            compiled,
+            source,
+            observation_data,
+            cell,
+            treatment_1,
+            treatment_2
+        )
+        X[, definition$columns] <- source_X
+    }
+    if (compiled$has_intercept) {
+        X <- cbind(`(Intercept)` = 1, X)
+    }
+    X
+}
+
+combo_warn_saturated_mean <- function(source_X, has_intercept, component_active,
+                                      component_name, source) {
+    if (!component_active || !ncol(source_X)) return(invisible(NULL))
+    augmented <- if (has_intercept) cbind(1, source_X) else source_X
+    if (qr(augmented)$rank == nrow(source_X)) {
+        cli::cli_warn(
+            "The {source} mean terms span every modeled {source} while {component_name} is active; fixed and residual effects will be separated primarily by their priors."
+        )
+    }
+    invisible(NULL)
+}
+
+combo_compile_global_mean <- function(spec, observation_data, cell_metadata,
+                                      compound_metadata, treatments, cell,
+                                      treatment_1, treatment_2, components,
+                                      warn_saturation = TRUE) {
+    n <- nrow(observation_data)
+    if (spec$type != "formula") {
+        return(list(
+            type = spec$type,
+            value = if (spec$type == "fixed") spec$value else NULL,
+            formula = NULL,
+            has_intercept = TRUE,
+            coefficient_names = character(),
+            beta_mean = numeric(),
+            beta_precision = matrix(numeric(), 0L, 0L),
+            sources = list(),
+            design = matrix(1, nrow = n, ncol = 1L,
+                            dimnames = list(NULL, "(Intercept)"))
+        ))
+    }
+
+    feature_names <- combo_mean_feature_names(
+        observation_data,
+        cell_metadata,
+        compound_metadata
+    )
+    prototype <- do.call(cbind, lapply(names(feature_names), function(source) {
+        data <- switch(
+            source,
+            observation = observation_data,
+            cell = cell_metadata,
+            compound = compound_metadata
+        )
+        data[0, feature_names[[source]], drop = FALSE]
+    }))
+    formula_terms <- tryCatch(
+        stats::terms(spec$formula, data = prototype),
+        error = function(error) {
+            cli::cli_abort(
+                "Mean formula could not be parsed: {conditionMessage(error)}"
+            )
+        }
+    )
+    labels <- attr(formula_terms, "term.labels")
+    has_intercept <- attr(formula_terms, "intercept") == 1L
+    term_sources <- vapply(
+        labels,
+        combo_formula_term_source,
+        character(1),
+        feature_names = feature_names
+    )
+    source_data <- list(
+        observation = observation_data,
+        cell = cell_metadata,
+        compound = compound_metadata
+    )
+    compiled_sources <- lapply(names(source_data), function(source) {
+        selected <- which(term_sources == source)
+        result <- combo_compile_source_formula(
+            labels[selected],
+            source_data[[source]],
+            environment(spec$formula),
+            source,
+            has_intercept
+        )
+        result$global_term_positions <- selected[result$term_positions]
+        result
+    })
+    names(compiled_sources) <- names(source_data)
+
+    cell_source <- compiled_sources$cell
+    compound_source <- compiled_sources$compound
+    compound_position <- match(treatments$drug, compound_metadata$drug)
+    if (anyNA(compound_position)) {
+        cli::cli_abort("Internal compound metadata alignment failed")
+    }
+    compiled_sources$cell$entity_X <- cell_source$X
+    compiled_sources$compound$entity_X <- compound_source$X
+    compiled_sources$compound$treatment_X <-
+        compound_source$X[compound_position, , drop = FALSE]
+
+    column_records <- do.call(rbind, lapply(names(compiled_sources), function(source) {
+        definition <- compiled_sources[[source]]
+        if (!ncol(definition$X)) return(NULL)
+        data.frame(
+            source = source,
+            column = colnames(definition$X),
+            term = definition$global_term_positions,
+            within = seq_len(ncol(definition$X)),
+            stringsAsFactors = FALSE
+        )
+    }))
+    if (is.null(column_records)) {
+        coefficient_names <- character()
+    } else {
+        column_records <- column_records[order(
+            column_records$term,
+            column_records$within
+        ), , drop = FALSE]
+        coefficient_names <- column_records$column
+    }
+    if (is_invalid_key(coefficient_names)) {
+        cli::cli_abort("Mean formula produces duplicate or empty coefficient names")
+    }
+    for (source in names(compiled_sources)) {
+        columns <- if (is.null(column_records)) character() else
+            column_records$column[column_records$source == source]
+        compiled_sources[[source]]$columns <- columns
+        compiled_sources[[source]]$X <- NULL
+        compiled_sources[[source]]$term_positions <- NULL
+        compiled_sources[[source]]$global_term_positions <- NULL
+    }
+
+    result <- list(
+        type = "formula",
+        value = NULL,
+        formula = spec$formula,
+        has_intercept = has_intercept,
+        coefficient_names = coefficient_names,
+        beta_mean = combo_compile_beta_mean(spec$beta_mean, coefficient_names),
+        beta_precision = combo_compile_beta_precision(
+            spec$beta_precision,
+            coefficient_names
+        ),
+        sources = compiled_sources
+    )
+    result$design <- combo_assemble_mean_design(
+        result,
+        observation_data,
+        cell,
+        treatment_1,
+        treatment_2
+    )
+    if (warn_saturation) {
+        combo_warn_saturated_mean(
+            result$sources$cell$entity_X,
+            result$has_intercept,
+            !is.null(components$cell_offset),
+            "cell_offset",
+            "cell"
+        )
+        combo_warn_saturated_mean(
+            result$sources$compound$entity_X,
+            result$has_intercept,
+            !is.null(components$treatment_offset),
+            "treatment_offset",
+            "compound"
+        )
+    }
+    result
 }
 
 
@@ -424,7 +789,6 @@ combo_compile_component <- function(
     kind,
     side,
     n_dimensions,
-    metadata,
     entity_names,
     dose,
     treatments = NULL
@@ -432,7 +796,6 @@ combo_compile_component <- function(
     if (is.null(component)) {
         return(NULL)
     }
-    mean <- combo_compile_mean(component, metadata, name)
     structure <- if (side == "cell") {
         compile_flat_structure(
             component$structure,
@@ -465,7 +828,6 @@ combo_compile_component <- function(
         side = side,
         n_entities = length(entity_names),
         n_dimensions = n_dimensions,
-        mean = mean,
         structure = structure,
         shrinkage = shrinkage
     )
@@ -476,7 +838,8 @@ compile_combo_design <- function(
     data,
     cell_data = NULL,
     compound_data = NULL,
-    require_response = FALSE
+    require_response = FALSE,
+    warn_saturation = TRUE
 ) {
     if (!inherits(model, "combo_model")) {
         cli::cli_abort("model must be constructed by combo_model()")
@@ -506,6 +869,13 @@ compile_combo_design <- function(
         treatments,
         compound_data
     )
+    compounds <- unique(treatments$drug)
+    compound_metadata <- combo_metadata_by_key(
+        compound_data,
+        "drug",
+        compounds,
+        "compound_data"
+    )
     cell_index <- match(parsed$cell, cells)
     treatment_index_1 <- match(parsed$key_1, treatment_keys)
     treatment_index_2 <- match(parsed$key_2, treatment_keys)
@@ -527,11 +897,6 @@ compile_combo_design <- function(
     names(components) <- names(specs)
     for (name in names(specs)) {
         definition <- specs[[name]]
-        metadata <- if (definition$side == "cell") {
-            cell_metadata
-        } else {
-            treatment_metadata
-        }
         entities <- if (definition$side == "cell") {
             cells
         } else {
@@ -543,12 +908,23 @@ compile_combo_design <- function(
             definition$kind,
             definition$side,
             definition$dims,
-            metadata,
             entities,
             model$dose,
             treatments
         )
     }
+    mean <- combo_compile_global_mean(
+        model$mean,
+        parsed$data,
+        cell_metadata,
+        compound_metadata,
+        treatments,
+        cell_index,
+        treatment_index_1,
+        treatment_index_2,
+        model$components,
+        warn_saturation = warn_saturation
+    )
     active_components <- Filter(Negate(is.null), components)
     fast_iid <- model$dose$type == "categorical" &&
         all(vapply(
@@ -567,13 +943,45 @@ compile_combo_design <- function(
             cells = cells,
             treatments = treatments,
             cell_metadata = cell_metadata,
+            compound_metadata = compound_metadata,
             treatment_metadata = treatment_metadata,
+            mean = mean,
             components = components,
             observation_prior = model$family$precision,
             fast_iid = fast_iid
         ),
         class = "compiled_combo_design"
     )
+}
+
+#' Construct the fixed-effect model matrix
+#'
+#' Builds the exact observation-level design used by the model mean. Cell terms
+#' enter once per observation and compound terms are summed over present drugs.
+#' Values are neither centered nor scaled, and factors use the contrasts that R
+#' records when compiling the formula.
+#'
+#' @param object A [combo_model()] specification.
+#' @param data Combination-screen rows.
+#' @param cell_data Optional cell metadata.
+#' @param compound_data Optional compound metadata.
+#' @param ... Reserved for future use.
+#' @return A numeric model matrix with one row per input observation.
+#' @exportS3Method stats::model.matrix
+model.matrix.combo_model <- function(object, data, cell_data = NULL,
+                                     compound_data = NULL, ...) {
+    if (length(list(...))) {
+        cli::cli_abort("Unused model.matrix() arguments")
+    }
+    compiled <- compile_combo_design(
+        object,
+        data,
+        cell_data = cell_data,
+        compound_data = compound_data,
+        require_response = FALSE,
+        warn_saturation = FALSE
+    )
+    compiled$mean$design
 }
 
 compile_combo_model <- function(
@@ -629,11 +1037,14 @@ compile_combo_model <- function(
         compiled$components[[name]] <- component
     }
 
-    alpha <- if (model$global_intercept$type == "empirical") {
-        mean(response[observed])
-    } else {
-        model$global_intercept$value
-    }
+    mean_design <- compiled$mean$design[observed, , drop = FALSE]
+    compiled$mean$observed_design <- mean_design
+    compiled$mean$intercept <- switch(
+        compiled$mean$type,
+        empirical = mean(response[observed]),
+        fixed = compiled$mean$value,
+        formula = if (compiled$mean$has_intercept) mean(response[observed]) else 0
+    )
     structure(
         list(
             model = compiled$model,
@@ -649,9 +1060,11 @@ compile_combo_model <- function(
             cells = compiled$cells,
             treatments = compiled$treatments,
             cell_metadata = compiled$cell_metadata,
+            compound_metadata = compiled$compound_metadata,
             treatment_metadata = compiled$treatment_metadata,
+            mean = compiled$mean,
             components = compiled$components,
-            alpha = alpha,
+            intercept = compiled$mean$intercept,
             observation_prior = compiled$observation_prior,
             fast_iid = compiled$fast_iid
         ),

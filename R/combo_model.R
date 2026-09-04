@@ -6,13 +6,13 @@
 #' For cell `k` and treatments `i` and `j`, the linear predictor is
 #'
 #' ```
-#' eta[k, i, j] = alpha + W0[k] + V0[i] + V0[j] +
+#' fitted_mean[k, i, j] = intercept + W0[k] + V0[i] + V0[j] +
 #'     dot(W[k, ], V1[i, ] + V1[j, ] + V2[i, ] * V2[j, ])
 #' ```
 #'
 #' where `*` denotes element-wise multiplication. The terms are:
 #'
-#' - `global_intercept` (`alpha`): the overall response level.
+#' - `mean`: the global mean or metadata regression; see [mean_specifications].
 #' - `cell_offset` (`W0`): baseline differences among cellular contexts.
 #' - `treatment_offset` (`V0`): additive treatment effects shared across contexts.
 #' - `cell_factors` (`W`): latent characteristics of each cellular context.
@@ -25,15 +25,17 @@
 #' A single-treatment row has no second-treatment or interaction contribution.
 #' Treatment order does not change the predictor. Setting a component to `NULL`
 #' removes its term; treatment factor terms require `cell_factors`.
+#' When `mean` uses a formula, enabled offsets remain zero-centered residual
+#' entity deviations around that regression.
 #'
 #' See [combo_gaussian_component()] for configuring each component. The remaining model
-#' specifications are described in [intercept_specifications],
+#' specifications are described in [mean_specifications],
 #' [dose_specifications], and [gaussian_response()].
 #'
 #' @param rank Positive integer shared latent dimension of `cell_factors`,
 #'   `treatment_main_factors`, and `treatment_interaction_factors`.
-#' @param global_intercept Overall response-level specification; see
-#'   [intercept_specifications].
+#' @param mean Overall response mean or fixed-effect regression; see
+#'   [mean_specifications].
 #' @param cell_offset Component for cell-specific baselines (`W0`), or `NULL`.
 #' @param cell_factors Component for latent cell characteristics (`W`), or `NULL`.
 #' @param treatment_offset Component for shared additive treatment effects
@@ -51,7 +53,7 @@
 #' @export
 combo_model <- function(
     rank = 2L,
-    global_intercept = empirical_intercept(),
+    mean = empirical_mean(),
     cell_offset = combo_gaussian_component(shrinkage = gamma_precision(shape = 1.1, rate = 1.1)),
     cell_factors = combo_gaussian_component(
         shrinkage = multiplicative_gamma(
@@ -75,8 +77,10 @@ combo_model <- function(
     )
 ) {
     rank <- param_positive_integer(rank, "rank")
-    if (!inherits(global_intercept, "param_intercept")) {
-        cli::cli_abort("global_intercept must be empirical_intercept() or fixed_intercept()")
+    if (!inherits(mean, "combo_mean")) {
+        cli::cli_abort(
+            "mean must be empirical_mean(), fixed_mean(), or formula_mean()"
+        )
     }
     if (!inherits(dose, "combo_dose")) {
         cli::cli_abort("dose must be categorical() or nested()")
@@ -132,7 +136,7 @@ combo_model <- function(
     structure(
         list(
             rank = rank,
-            global_intercept = global_intercept,
+            mean = mean,
             components = components,
             dose = dose,
             family = family
@@ -151,12 +155,14 @@ print.combo_model <- function(x, ...) {
         cli::cli_text("<combo_model>")
         cli::cli_text("family: Gaussian(identity)")
         cli::cli_text("rank: {x[['rank']]}")
-        intercept <- if (x$global_intercept$type == "empirical") { # nolint: object_usage_linter.
-            "empirical observed-response mean"
-        } else {
-            format(x$global_intercept$value)
-        }
-        cli::cli_text("global_intercept: {intercept}")
+        mean <- x[["mean"]] # nolint: object_usage_linter.
+        description <- switch(
+            mean$type,
+            empirical = "empirical observed-response mean",
+            fixed = paste0("fixed at ", format(mean$value)),
+            formula = paste(deparse(mean$formula), collapse = " ")
+        )
+        cli::cli_text("mean: {description}")
         if (x$dose$type == "categorical") {
             cli::cli_text("dose: categorical")
         } else {
@@ -171,9 +177,7 @@ print.combo_model <- function(x, ...) {
             }
             structure <- structure_type(component[["structure"]]) # nolint: object_usage_linter.
             shrinkage <- component[["shrinkage"]][["type"]] # nolint: object_usage_linter.
-            cli::cli_text(
-                "- {name}: mean {deparse(component[['mean']])} | structure {structure} | shrinkage {shrinkage}"
-            )
+            cli::cli_text("- {name}: structure {structure} | shrinkage {shrinkage}")
         }
     })
     writeLines(output)
@@ -186,29 +190,18 @@ print.combo_model <- function(x, ...) {
 #' The model slot determines what the term means in the response predictor;
 #' this function determines how its entity-level values are modeled.
 #'
-#' An enabled component separates systematic and residual variation:
+#' Every enabled component is a zero-centered residual deviation:
 #'
 #' ```
-#' component value ~ Gaussian(mean_formula, precision_structure)
+#' component value ~ Gaussian(0, precision_structure)
 #' ```
 #'
-#' - `mean` defines the feature-informed part. It is currently available only for
-#'   scalar offset components.
-#' - `beta_precision` regularizes their coefficients of the mean formula if they exist;
-#'   see [shrinkage_specifications].
 #' - `structure` describes which cell or treatment deviations are related and their
 #'   relative precision. See [context_specifications].
-#' - `shrinkage` separately controls the magnitude of deviations around the mean;
+#' - `shrinkage` controls the magnitude of deviations around zero;
 #'   see [shrinkage_specifications].
 #'
 #' @param shrinkage Deviation-shrinkage specification; see [shrinkage_specifications].
-#' @param mean One-sided metadata formula for the entity-level mean. Use `~0`
-#'   for a zero mean. Formula-generated model-matrix columns are centered and
-#'   scaled to unit sample standard deviation before coefficients are applied.
-#'   Nonzero formulas are supported only for offset components.
-#' @param beta_precision Precision specification for metadata-mean
-#'   coefficients on this standardized design scale, or `NULL`; see
-#'   [shrinkage_specifications].
 #' @param structure Relationship structure among component entities. `NULL`
 #'   selects IID; see [context_specifications].
 #' @return A `combo_gaussian_component` specification, inheriting from the
@@ -216,18 +209,10 @@ print.combo_model <- function(x, ...) {
 #' @export
 combo_gaussian_component <- function(
     shrinkage,
-    mean = ~0,
-    beta_precision = NULL,
     structure = NULL
 ) {
-    if (!inherits(mean, "formula") || length(mean) != 2L) {
-        cli::cli_abort("mean must be a one-sided formula")
-    }
     if (missing(shrinkage) || !inherits(shrinkage, "param_shrinkage")) {
         cli::cli_abort("shrinkage must be an explicit shrinkage specification")
-    }
-    if (!is.null(beta_precision) && !inherits(beta_precision, "param_shrinkage")) {
-        cli::cli_abort("beta_precision must be NULL or a shrinkage specification")
     }
     if (is.null(structure)) {
         # iid() is defined with the structural-prior code. A small independent
@@ -239,8 +224,6 @@ combo_gaussian_component <- function(
     }
     structure(
         list(
-            mean = mean,
-            beta_precision = beta_precision,
             structure = structure,
             shrinkage = shrinkage
         ),
@@ -254,29 +237,6 @@ validate_component <- function(component, name, kind) {
     }
     if (!inherits(component, "combo_component")) {
         cli::cli_abort("{name} must be NULL or a combo_gaussian_component()")
-    }
-    formula_terms <- stats::terms(component$mean)
-    if (attr(formula_terms, "intercept") != 0L) {
-        cli::cli_abort("{name} mean formula must omit the intercept (use ~ 0 + ...)")
-    }
-    has_mean <- !formula_is_zero(component$mean)
-    if (has_mean && kind != "offset") {
-        cli::cli_abort(
-            "Nonzero mean formulas are supported only for offset components; {name} must use ~ 0"
-        )  # TODO: this should be relaxed to a warning.
-    }
-    if (has_mean && is.null(component$beta_precision)) {
-        # TODO: this could be relaxed to a warning, with a default beta_precision applied.
-        cli::cli_abort("{name} requires beta_precision when its mean has predictors")
-    }
-    if (!has_mean && !is.null(component$beta_precision)) {
-        # TODO: this could be relaxed to a warning, with beta_precision ignored.
-        cli::cli_abort("{name} must omit beta_precision when mean is ~ 0")
-    }
-    if (has_mean && !component$beta_precision$type %in% c("fixed", "gamma")) {
-        cli::cli_abort(
-            "{name} beta_precision must be fixed_scale() or gamma_precision() when mean has predictors"
-        )
     }
     q_type <- structure_type(component$structure)
     if (!q_type %in% c("iid", "tree", "precision", "gmrf")) {
@@ -357,9 +317,9 @@ param_shrinkage <- function(type, ...) {
 
 #' Shrinkage specifications
 #'
-#' Configure the prior scale of Gaussian component deviations or metadata-mean
-#' coefficients. All precision parameters use the shape-rate convention where a
-#' gamma distribution is used.
+#' Configure the prior scale of zero-centered Gaussian component deviations.
+#' All precision parameters use the shape-rate convention where a gamma
+#' distribution is used.
 #'
 #' The general horseshoe prior applies to an IID deviation `u[n, d]` for entity
 #' `n` and latent dimension `d`:
@@ -381,7 +341,7 @@ param_shrinkage <- function(type, ...) {
 #'   Entity-local scales are available only for IID contexts.
 #'
 #' Internally, the corresponding deviation precision is `1 / (tau[d]^2 * lambda[n, d]^2)`.
-#' Thus smaller scales imply stronger shrinkage toward the component mean.
+#' Thus smaller scales imply stronger shrinkage toward zero.
 #'
 #' `fixed_scale(precision = p)` fixes the precision multiplier:
 #'
@@ -507,33 +467,129 @@ gaussian_response <- function(
     )
 }
 
-# Mean specifications for the global intercept
+# Mean specifications for the global regression
 
-#' Global-intercept specifications
+#' Global-mean specifications
 #'
-#' `empirical_intercept()` fixes the global intercept at the mean of the
-#' observed responses. `fixed_intercept()` fixes it at a supplied value.
+#' `empirical_mean()` fixes the intercept at the mean of the observed responses.
+#' `fixed_mean()` fixes it at a supplied value. `formula_mean()` defines a
+#' fixed-effect regression using observation, cell, and compound metadata.
+#'
+#' Formula terms retain the units and contrasts produced by [stats::model.matrix()];
+#' no automatic centering or scaling is applied. The formula intercept, when
+#' present, is learned with a flat prior. `beta_mean` and `beta_precision`
+#' describe a proper Gaussian prior for the remaining coefficients.
+#'
+#' Non-reserved observation columns and covariates in the keyed cell and
+#' compound metadata tables share one formula namespace. Their names must not
+#' collide. Each term must use variables from only one source, so transformations
+#' and within-source interactions are supported but cross-source interactions
+#' are not. Cell terms enter once per observation; compound terms are evaluated
+#' for each present drug and added. Use [stats::model.matrix()] on a
+#' `combo_model` to inspect the exact coefficient names and raw-scale design.
 #'
 #' @param value A finite numeric scalar.
-#' @return An intercept specification for [combo_model()].
-#' @name intercept_specifications
+#' @param formula A one-sided formula.
+#' @param beta_mean A finite scalar or named numeric vector giving the prior
+#'   mean of non-intercept coefficients.
+#' @param beta_precision A positive scalar, named positive vector, or named
+#'   symmetric positive-definite dense or sparse matrix giving the coefficient
+#'   prior precision. Vector and matrix names refer to the non-intercept columns
+#'   returned by [stats::model.matrix()].
+#' @return A global-mean specification for [combo_model()].
+#' @name mean_specifications
 NULL
 
-#' @rdname intercept_specifications
+#' @rdname mean_specifications
 #' @export
-empirical_intercept <- function() {
-    structure(list(type = "empirical"), class = "param_intercept")
+empirical_mean <- function() {
+    structure(list(type = "empirical"), class = "combo_mean")
 }
 
-#' @rdname intercept_specifications
+#' @rdname mean_specifications
 #' @export
-fixed_intercept <- function(value) {
-    if (length(value) != 1L || is.na(value) || !is.finite(value)) {
+fixed_mean <- function(value) {
+    if (!is.numeric(value) || length(value) != 1L || is.na(value) ||
+            !is.finite(value)) {
         cli::cli_abort("value must be one finite number")
     }
     structure(
         list(type = "fixed", value = as.numeric(value)),
-        class = "param_intercept"
+        class = "combo_mean"
+    )
+}
+
+#' @rdname mean_specifications
+#' @export
+formula_mean <- function(
+    formula = ~1,
+    beta_mean = 0,
+    beta_precision = 1
+) {
+    if (!inherits(formula, "formula") || length(formula) != 2L) {
+        cli::cli_abort("formula must be a one-sided formula")
+    }
+    valid_beta_mean <- is.numeric(beta_mean) && is.null(dim(beta_mean)) &&
+        length(beta_mean) > 0L && !anyNA(beta_mean) && all(is.finite(beta_mean))
+    if (!valid_beta_mean) {
+        cli::cli_abort("beta_mean must be a finite numeric scalar or named vector")
+    }
+    if (!is.null(names(beta_mean)) && is_invalid_key(names(beta_mean))) {
+        cli::cli_abort("beta_mean names must be unique and nonempty")
+    }
+    matrix_precision <- is.matrix(beta_precision) ||
+        methods::is(beta_precision, "Matrix")
+    vector_precision <- is.numeric(beta_precision) &&
+        is.null(dim(beta_precision)) && length(beta_precision) > 0L
+    if (!matrix_precision && !vector_precision) {
+        cli::cli_abort(
+            "beta_precision must be a positive scalar, named vector, or named matrix"
+        )
+    }
+    if (vector_precision) {
+        if (anyNA(beta_precision) || any(!is.finite(beta_precision)) ||
+                any(beta_precision <= 0)) {
+            cli::cli_abort("beta_precision values must be finite and positive")
+        }
+        if (length(beta_precision) > 1L &&
+                (is.null(names(beta_precision)) ||
+                    is_invalid_key(names(beta_precision)))) {
+            cli::cli_abort(
+                "A beta_precision vector must have unique, nonempty coefficient names"
+            )
+        }
+    } else {
+        precision <- as.matrix(beta_precision)
+        row_names <- rownames(precision)
+        column_names <- colnames(precision)
+        if (!is.numeric(precision) || nrow(precision) != ncol(precision) ||
+                anyNA(precision) || any(!is.finite(precision))) {
+            cli::cli_abort("beta_precision matrix must be square and finite")
+        }
+        if (is.null(row_names) || is.null(column_names) ||
+                is_invalid_key(row_names) || !identical(row_names, column_names)) {
+            cli::cli_abort(
+                "beta_precision matrix must have identical unique row and column names"
+            )
+        }
+        if (!isTRUE(all.equal(precision, t(precision), tolerance = 1e-12))) {
+            cli::cli_abort("beta_precision matrix must be symmetric")
+        }
+        tryCatch(
+            chol(precision),
+            error = function(error) {
+                cli::cli_abort("beta_precision matrix must be positive definite")
+            }
+        )
+    }
+    structure(
+        list(
+            type = "formula",
+            formula = formula,
+            beta_mean = beta_mean,
+            beta_precision = beta_precision
+        ),
+        class = "combo_mean"
     )
 }
 

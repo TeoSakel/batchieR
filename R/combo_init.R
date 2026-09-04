@@ -30,28 +30,14 @@ init_shrinkage <- function(spec, n_entities, n_dimensions) {
     result
 }
 
-init_beta_precision <- function(mean) {
-    p <- ncol(mean$X)
-    if (!p) {
-        return(NULL)
-    }
-    spec <- mean$beta_precision
-    list(
-        spec = spec,
-        precision = if (spec$type == "fixed") spec$precision else 1
-    )
-}
-
 #' Initialize all sampler state for one compiled model component
 #'
 #' Converts a static compiled component into mutable Gibbs state:
 #'
-#' - `compiled`: static metadata, dimensions, mean design, and structural prior.
+#' - `compiled`: static metadata, dimensions, and structural prior.
 #' - `values`: entity-level effects used to construct predictions.
 #' - `raw`: node-level deviations governed by the structural prior; hierarchical
 #'   structures may include latent nodes that have no corresponding entity.
-#' - `beta` and `mean_value`: mean-model coefficients and their fitted value for each entity.
-#' - `beta_precision`: precision state for the mean-model coefficients.
 #' - `shrinkage`: global, local, auxiliary, or dimension-specific precision state
 #'   for the component deviations, depending on its shrinkage specification.
 #'
@@ -64,7 +50,7 @@ init_beta_precision <- function(mean) {
 #'
 #' Offsets have one state column and factors have one per rank dimension.
 #' Entities map to nodes through `modeled_index`; on those nodes,
-#' `raw = (values - mean_value) * modeled_scale`. A `NULL` compiled component is
+#' `raw = values * modeled_scale`. A `NULL` compiled component is
 #' disabled and remains `NULL` throughout the sampler.
 #'
 #' @param compiled A component produced by `combo_compile_component()`, or
@@ -94,18 +80,10 @@ init_component_state <- function(compiled) {
         ncol = compiled$n_dimensions,
         dimnames = list(compiled$structure$nodes, colnames(values))
     )
-    beta <- stats::setNames(numeric(ncol(compiled$mean$X)), colnames(compiled$mean$X))
     list(
         compiled = compiled,
         values = values,
         raw = raw,
-        beta = beta,
-        mean_value = if (length(beta)) {
-            as.numeric(compiled$mean$X %*% beta)
-        } else {
-            numeric(nrow(values))
-        },
-        beta_precision = init_beta_precision(compiled$mean),
         shrinkage = init_shrinkage(
             compiled$shrinkage,
             compiled$n_entities,

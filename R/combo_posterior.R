@@ -108,7 +108,12 @@ predict.combo_fit <- function(
 
 predict_combo_draw <- function(draw, indices, rank) {
     n <- length(indices$cell)
-    mu <- rep(draw$alpha, n)
+    mu <- rep(draw$intercept, n)
+    if (length(draw$beta)) {
+        mu <- mu + as.numeric(
+            indices$mean_design[, names(draw$beta), drop = FALSE] %*% draw$beta
+        )
+    }
     W0 <- draw$components$cell_offset
     if (!is.null(W0)) {
         mu <- mu + W0$value[indices$cell, 1L]
@@ -151,6 +156,7 @@ combo_prediction_indices <- function(fit, newdata) {
             cell = fit$compiled$all_cell,
             treatment_1 = fit$compiled$all_treatment_1,
             treatment_2 = fit$compiled$all_treatment_2,
+            mean_design = fit$compiled$mean$design,
             row_id = seq_len(nrow(fit$compiled$data))
         ))
     }
@@ -176,10 +182,18 @@ combo_prediction_indices <- function(fit, newdata) {
             }
         ))
     }
+    mean_design <- combo_assemble_mean_design(
+        fit$compiled$mean,
+        parsed$data,
+        cell,
+        treatment_1,
+        treatment_2
+    )
     list(
         cell = cell,
         treatment_1 = treatment_1,
         treatment_2 = treatment_2,
+        mean_design = mean_design,
         row_id = seq_len(nrow(newdata))
     )
 }
@@ -227,7 +241,7 @@ as_draws_rvars.combo_fit <- function(x, ...) {
 #'
 #' Converts retained Gibbs snapshots to a numeric iterations-by-chains-by-variables
 #' array. Public variables include the intercept, observation scale and precision,
-#' enabled component values, mean coefficients, and shrinkage precisions. Use the
+#' enabled component values, global mean coefficients, and shrinkage precisions. Use the
 #' `posterior::as_draws*()` methods when a `posterior` draws format is required.
 #'
 #' @param fit A `combo_fit` object.
@@ -361,10 +375,19 @@ parameter_map <- function(fit, include = c("public", "all")) {
     include <- match.arg(include)
     snapshot <- fit$draws[[1L]]
     result <- list(
-        combo_basic_map_row("alpha", "global", "value"),
+        combo_basic_map_row("intercept", "mean", "intercept"),
         combo_basic_map_row("sigma", "observation", "scale"),
         combo_basic_map_row("observation_precision", "observation", "precision")
     )
+    if (length(snapshot$beta)) {
+        beta_map <- combo_basic_map_row(
+            combo_vector_variable_names("beta", snapshot$beta),
+            "mean",
+            "coefficient"
+        )
+        beta_map$feature <- names(snapshot$beta)
+        result[[length(result) + 1L]] <- beta_map
+    }
     for (component_name in names(snapshot$components)) {
         component <- snapshot$components[[component_name]]
         if (is.null(component)) {
@@ -377,25 +400,6 @@ parameter_map <- function(fit, include = c("public", "all")) {
             component_name,
             component$value
         )
-        if (length(component$beta)) {
-            beta_map <- combo_basic_map_row(
-                combo_vector_variable_names(
-                    paste0(component_name, "_mean_coefficient"),
-                    component$beta
-                ),
-                component_name,
-                "mean_coefficient"
-            )
-            beta_map$feature <- names(component$beta)
-            result[[length(result) + 1L]] <- beta_map
-        }
-        if (!is.null(component$beta_precision)) {
-            result[[length(result) + 1L]] <- combo_basic_map_row(
-                paste0(component_name, "_beta_precision"),
-                component_name,
-                "beta_precision"
-            )
-        }
         result[[length(result) + 1L]] <- combo_hyperparameter_map(
             component_name,
             "global_precision",
@@ -433,12 +437,12 @@ parameter_map <- function(fit, include = c("public", "all")) {
     }
     if (include == "all") {
         fitted_map <- combo_basic_map_row(
-            combo_vector_variable_names("fitted_mean", snapshot$Mu),
+            combo_vector_variable_names("fitted_mean", snapshot$fitted_mean),
             "observation",
             "fitted_mean"
         )
         fitted_map$entity_type <- "observation"
-        fitted_map$entity_index <- seq_along(snapshot$Mu)
+        fitted_map$entity_index <- seq_along(snapshot$fitted_mean)
         fitted_map$entity_key <- as.character(fit$compiled$observed_rows)
         fitted_map$entity_label <- fitted_map$entity_key
         result <- c(
@@ -468,10 +472,15 @@ parameter_map <- function(fit, include = c("public", "all")) {
 
 combo_flatten_snapshot <- function(fit, snapshot, draw_index, include) {
     result <- c(
-        alpha = snapshot$alpha,
+        intercept = snapshot$intercept,
         sigma = 1 / sqrt(snapshot$precision),
         observation_precision = snapshot$precision
     )
+    if (length(snapshot$beta)) {
+        beta <- as.numeric(snapshot$beta)
+        names(beta) <- combo_vector_variable_names("beta", snapshot$beta)
+        result <- c(result, beta)
+    }
     for (component_name in names(snapshot$components)) {
         component <- snapshot$components[[component_name]]
         if (is.null(component)) {
@@ -483,20 +492,6 @@ combo_flatten_snapshot <- function(fit, snapshot, draw_index, include) {
             component$value
         )
         result <- c(result, values)
-        if (length(component$beta)) {
-            beta <- as.numeric(component$beta)
-            names(beta) <- combo_vector_variable_names(
-                paste0(component_name, "_mean_coefficient"),
-                component$beta
-            )
-            result <- c(result, beta)
-        }
-        if (!is.null(component$beta_precision)) {
-            beta_precision <- component$beta_precision
-            names(beta_precision) <-
-                paste0(component_name, "_beta_precision")
-            result <- c(result, beta_precision)
-        }
         global <- as.numeric(component$global_precision)
         names(global) <- combo_vector_variable_names(
             paste0(component_name, "_global_precision"),
@@ -521,10 +516,10 @@ combo_flatten_snapshot <- function(fit, snapshot, draw_index, include) {
         }
     }
     if (include == "all") {
-        fitted_mean <- as.numeric(snapshot$Mu)
+        fitted_mean <- as.numeric(snapshot$fitted_mean)
         names(fitted_mean) <- combo_vector_variable_names(
             "fitted_mean",
-            snapshot$Mu
+            snapshot$fitted_mean
         )
         diagnostics <- c(
             sampler_rmse = snapshot$last_rmse,

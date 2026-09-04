@@ -37,7 +37,8 @@ details of fit objects, printing, and sampler use are intentionally omitted here
 For cell $k$ and compound-dose treatments $i$ and $j$, the linear predictor is
 
 $$
-\eta_{kij} = \alpha + W_{0k} + V_{0i} + V_{0j}
+\eta_{kij} = \mathrm{intercept} + x_{kij}^{\top}\beta
+    + W_{0k} + V_{0i} + V_{0j}
     + W_k^\top\left(V_{1i} + V_{1j} + V_{2i}\odot V_{2j}\right)
 $$
 
@@ -51,38 +52,38 @@ The five configurable terms have distinct scientific meanings:
 | $V_1$ | cell-dependent treatment effect | compound and dose relationships |
 | $V_2$ | nonadditive combination effect  | compound and dose relationships |
 
-The current implementation limits all five configurable terms to conditionally
-Gaussian components. Each component can be written schematically as
+The global `mean` can contain a feature regression. The five remaining terms
+are conditionally Gaussian, zero-centered residual components. A component can
+be written schematically as
 
 $$
-\theta = X\beta + u, \qquad
-u \mid \rho,Q \sim \mathcal N(0, (\rho Q)^{-1})
+u \mid \rho,Q \sim \mathcal N(0, (\rho Q)^{-1}).
 $$
 
 This separates three questions:
 
-1. **Mean** ($X\beta$): can measured features explain systematic differences?
+1. **Mean** ($\mathrm{intercept} + X\beta$): can measured features explain systematic differences?
 2. **Magnitude** ($\rho$): how strongly should unexplained deviations $u$ shrink?
 3. **Dependence** ($Q$): what is the relationship among entities in $u$?
 
-`combo_gaussian_component()` turns these choices into a component specification
-for assignment to one of the five slots in `combo_model()`. Its arguments map
-directly onto the decomposition above:
+`formula_mean()` specifies the systematic term. `combo_gaussian_component()`
+specifies the residual magnitude and dependence for assignment to one of the
+five component slots in `combo_model()`:
 
 | Argument | Part of the prior |
 |:--|:--|
-| `mean`           | the systematic term $X\beta$ |
-| `beta_precision` | regularization of the coefficients $\beta$ when the mean uses features |
 | `shrinkage`      | the overall or entity-specific magnitude of the residual $u$ |
 | `structure`      | the relative residual precision $Q$; `iid()` uses $Q=I$ |
 
-For example, a feature-informed offset component with otherwise independent residuals
-can be specified as
+For example, a feature-informed global mean together with otherwise independent
+residual offsets can be specified as
 
 ```{r gaussian-component-template}
+example_mean <- formula_mean(
+    ~ feature_1 + feature_2,
+    beta_precision = 1
+)
 example_component <- combo_gaussian_component(
-    mean = ~ 0 + feature_1 + feature_2,
-    beta_precision = gamma_precision(),
     structure = iid(),
     shrinkage = global_half_cauchy()
 )
@@ -94,9 +95,9 @@ $V_2$ enter the predictor only through products, so coordinated changes to their
 representation can leave the likelihood unchanged. Consequently, coordinate-specific
 nonzero means for these factors would depend on an arbitrary representation and
 require additional identification constraints to be interpretable. It therefore
-makes sense to define feature-informed means only for the scalar, identifiable
-offset variables $W_0$ and $V_0$, while using covariance or precision structures
-to encode biological relationships among entities in the factor components.
+makes sense to put feature effects in the identifiable global response mean,
+while using covariance or precision structures to encode biological
+relationships among entities in the factor components.
 
 A fourth question applies to treatments: should doses be unrelated categories,
 or deviations from a shared compound-level value?
@@ -172,11 +173,12 @@ par(old_par)
 The annotations represent prior information about the entities (cells and compounds)
 involved like pathway scores, expression components, target annotations, or
 other low-dimensional summaries. `growth_rate` and `physchem_pc` are included as
-plausible nuisance covariates to illustrate regularized feature means.
+plausible nuisance covariates to illustrate a regularized global mean.
 
 ## Model specifications
 
-`combo_model()` separates the response surface into five configurable components:
+`combo_model()` separates the response surface into a global mean and five
+configurable residual components:
 
 1. the cell offset $W_0$,
 2. cell factors $W$,
@@ -187,21 +189,21 @@ plausible nuisance covariates to illustrate regularized feature means.
 We build six models. They are easiest to understand as three pairs:
 
 1. `default` and `iid` are two IID baselines;
-2. `features` and `nested_dose` add feature means and then dose pooling
+2. `features` and `nested_dose` add global mean regression and then dose pooling
    but otherwise leave the entities independent; and
 3. `tree` and `gmrf` start from `nested_dose` and add two alternative
    dependence structures.
 
 The models use the same rank-three Gaussian likelihood and differ only in their priors.
 
-| Model | Feature means | Dose model | Cell-factor structure | Treatment-factor structure | Treatment shrinkage |
+| Model | Global mean | Dose model | Cell-factor structure | Treatment-factor structure | Treatment shrinkage |
 |:--|:--|:--|:--|:--|:--|
-| `default` | none | categorical | IID | IID | horseshoe |
-| `iid` | none | categorical | IID | IID | global half-Cauchy |
-| `features` | offsets | categorical | IID | IID | global half-Cauchy |
-| `nested_dose` | offsets | nested | IID | IID | global half-Cauchy |
-| `tree` | offsets | nested | tree | tree | global half-Cauchy |
-| `gmrf` | offsets | nested | GMRF | GMRF | global half-Cauchy |
+| `default` | empirical intercept | categorical | IID | IID | horseshoe |
+| `iid` | empirical intercept | categorical | IID | IID | global half-Cauchy |
+| `features` | feature regression | categorical | IID | IID | global half-Cauchy |
+| `nested_dose` | feature regression | nested | IID | IID | global half-Cauchy |
+| `tree` | feature regression | nested | tree | tree | global half-Cauchy |
+| `gmrf` | feature regression | nested | GMRF | GMRF | global half-Cauchy |
 
 ### IID baseline models
 
@@ -237,8 +239,9 @@ not provide a "generalized horseshoe" and uses only global shrinkage for structu
 For a cleaner comparison with the structured models, we define an IID model with
 just global half-Cauchy shrinkage. Later models keep this shrinkage family while
 changing the mean, dose model, or dependence structure. We retain the default
-horseshoe priors as a second baseline for comparison. In both baselines, means
-remain zero, structures remain IID, and doses remain separate categories.
+horseshoe priors as a second baseline for comparison. In both baselines, the
+intercept is the empirical response mean, residual components are zero-centered,
+structures remain IID, and doses remain separate categories.
 
 ```{r compatible-iid-model}
 iid_model <- combo_model(
@@ -269,59 +272,58 @@ iid_model <- combo_model(
 
 ### Metadata-informed means and dose pooling
 
-#### Metadata-informed additive offsets
+#### Metadata-informed global mean
 
-Prepared cell covariates can define the mean of $W_0$, and compound
-covariates the mean of $V_0$:
+Prepared observation, cell, and compound covariates can define one global
+response mean:
 
 $$
-W_{0k} = x_k^\top\beta_W + u_{Wk}, \qquad
-V_{0i} = z_i^\top\beta_V + u_{Vi}
+\mathrm{fitted\_mean}_{kij}
+  = \mathrm{intercept} + x_{kij}^{\top}\beta
+    + W_{0k} + V_{0i} + V_{0j} + \text{factor terms}.
 $$
 
-These feature-informed means let annotations share information across entities.
-They are especially useful for a cell or compound that is included and annotated
-when the model is fitted but has few or no observed responses: its features can
-still inform its baseline or additive effect.
+Cell formula terms enter once for each observation. Compound terms are evaluated
+for each present drug and added, so a combination receives both compounds'
+feature contributions and a single-agent row receives one. The zero-centered
+$W_0$ and $V_0$ offsets remain active as residual entity deviations not explained
+by the formula.
 
-Within `combo_gaussian_component()`, the two fields relevant to feature
-regression have separate jobs:
+If a source-specific formula block spans every corresponding entity while its
+offset remains active, `fit_combo()` warns that the fixed and residual effects
+will be separated primarily by their priors.
 
-- `mean` is a one-sided R formula that constructs $X$ and specifies
-  $X\beta$. It must omit an intercept, for example `~ 0 + pathway_activity + growth_rate`.
-- `beta_precision` specifies the prior regularization of $\beta$. It is
-  required when `mean` contains predictors; here `gamma_precision()` lets the
-  data learn their common prior precision.
+`formula_mean()` takes a one-sided formula, a prior mean for the non-intercept
+coefficients, and a fixed prior precision. Its intercept is learned jointly with
+the slopes under a flat prior. A positive scalar precision is shared by all
+slopes; named positive vectors define a diagonal precision; and named symmetric
+positive-definite dense or sparse matrices define a general precision.
 
-The component-level `shrinkage` argument has a different role: it controls the
-residual $u$ around $X\beta$, not the feature coefficients. This separation
-allows strong feature signal and small unexplained entity variation, or the
-reverse, to be learned independently.
+The covariates referenced by the formula can come from three sources:
 
-The covariates referenced by these formulas are supplied separately from the
-experiment table when the model is fitted:
+- non-reserved columns of the observation table;
+- `cell_data`, matched by its unique, nonmissing `cell` column;
+- `compound_data`, matched by its unique, nonmissing `drug` column.
 
-- a `cell_offset` formula is evaluated using `cell_data`, matched to model
-  cells by its unique, nonmissing `cell` column;
-- a `treatment_offset` formula is evaluated using `compound_data`, matched by
-  its unique, nonmissing `drug` column. Compound annotations are then attached
-  to every modeled dose of that compound.
+Feature names must be unique across sources. Each formula term must belong to
+one source: within-source transformations and interactions are supported, but
+cross-source interactions are rejected. `model.matrix()` exposes the exact
+coefficient names, ordering, factor contrasts, and observation-level design.
 
-Both metadata tables are passed to `fit_combo()`. Variables used by a formula
-must be present and finite for every relevant entity. Each formula-generated
-model-matrix column is centered and divided by its sample standard deviation
-before multiplying by $\beta$. Consequently, `beta_precision`, posterior
-coefficients, and `prior_predict(beta_offset = ...)` all operate on this
-standardized design scale, not on the raw covariate scale. For an ordinary
-numeric covariate, a coefficient is the change associated with a one-standard-
-deviation increase in that covariate, holding the other design columns fixed.
+Design values use ordinary R `model.matrix()` units and are not automatically
+centered or scaled. A numeric coefficient is therefore a raw-covariate slope.
+Scaling continuous covariates to unit variance can make a common precision more
+meaningful, but that remains an explicit data-preparation choice.
 
 ```{r feature-model}
+feature_mean <- formula_mean(
+    ~ pathway_activity + growth_rate + target_signature + physchem_pc,
+    beta_precision = 1
+)
 feature_model <- combo_model(
     rank = 3,
+    mean = feature_mean,
     cell_offset = combo_gaussian_component(
-        mean = ~ 0 + pathway_activity + growth_rate,
-        beta_precision = gamma_precision(),
         structure = iid(),
         shrinkage = gamma_precision()
     ),
@@ -330,8 +332,6 @@ feature_model <- combo_model(
         shrinkage = multiplicative_gamma()
     ),
     treatment_offset = combo_gaussian_component(
-        mean = ~ 0 + target_signature + physchem_pc,
-        beta_precision = gamma_precision(),
         structure = iid(),
         shrinkage = global_half_cauchy()
     ),
@@ -347,17 +347,12 @@ feature_model <- combo_model(
 )
 ```
 
-Feature-informed means are currently limited to the scalar, identifiable offsets $W_0$ and $V_0$.
-A coefficient in the $W_0$ mean describes how a cell feature shifts baseline
-response, while a coefficient in the $V_0$ mean describes how a compound feature
-shifts its additive effect across cells. The factor variables $W$, $V_1$, and $V_2$,
-by contrast, enter the predictor only through products and have sign and
-permutation symmetries. A coefficient for, say, the first coordinate would
-change meaning under an equivalent representation that flips or reorders the factors.
-Without additional identification constraints, feature means for these factors
-are not well defined, so the current API keeps them at zero. Biological
-information can still enter factor components through `structure`, which relates
-entities without assigning a biological label to a particular latent coordinate.
+The global coefficients act directly on the identifiable response mean. The
+factor variables $W$, $V_1$, and $V_2$, by contrast, enter the predictor only
+through products and have sign and permutation symmetries. The API therefore
+keeps every Gaussian component zero-centered. Biological information can still
+enter factor components through `structure`, which relates entities without
+assigning a biological label to a particular latent coordinate.
 
 #### Dose pooling within compounds
 
@@ -377,9 +372,8 @@ monotonicity, or fit a dose-response curve.
 ```{r nested-dose-model}
 nested_dose_model <- combo_model(
     rank = 3,
+    mean = feature_mean,
     cell_offset = combo_gaussian_component(
-        mean = ~ 0 + pathway_activity + growth_rate,
-        beta_precision = gamma_precision(),
         structure = iid(),
         shrinkage = gamma_precision()
     ),
@@ -388,8 +382,6 @@ nested_dose_model <- combo_model(
         shrinkage = multiplicative_gamma()
     ),
     treatment_offset = combo_gaussian_component(
-        mean = ~ 0 + target_signature + physchem_pc,
-        beta_precision = gamma_precision(),
         structure = iid(),
         shrinkage = global_half_cauchy()
     ),
@@ -440,8 +432,8 @@ These component specifications are assigned in `combo_model()` through
 - `treatment_main_factors`: $V_1$
 - `treatment_interaction_factors`: $V_2$.
 
-We keep their means at zero. The feature-informed offsets $W_0$ and $V_0$ and
-the nested-dose model remain as in the preceding section, so this model changes
+We keep their means at zero. The feature-informed global mean, residual offsets,
+and nested-dose model remain as in the preceding section, so this model changes
 only the dependence among latent factors.
 
 `tree()` constructs the relative precision from a data frame containing `node`
@@ -482,9 +474,8 @@ It retains `multiplicative_gamma()` for `cell_factors` and uses
 ```{r tree-model}
 tree_model <- combo_model(
     rank = 3,
+    mean = feature_mean,
     cell_offset = combo_gaussian_component(
-        mean = ~ 0 + pathway_activity + growth_rate,
-        beta_precision = gamma_precision(),
         structure = iid(),
         shrinkage = gamma_precision()
     ),
@@ -493,8 +484,6 @@ tree_model <- combo_model(
         shrinkage = multiplicative_gamma()
     ),
     treatment_offset = combo_gaussian_component(
-        mean = ~ 0 + target_signature + physchem_pc,
-        beta_precision = gamma_precision(),
         structure = iid(),
         shrinkage = global_half_cauchy()
     ),
@@ -619,9 +608,8 @@ otherwise keeps the tree-model specification unchanged.
 ```{r gmrf-model}
 gmrf_model <- combo_model(
     rank = 3,
+    mean = feature_mean,
     cell_offset = combo_gaussian_component(
-        mean = ~ 0 + pathway_activity + growth_rate,
-        beta_precision = gamma_precision(),
         structure = iid(),
         shrinkage = gamma_precision()
     ),
@@ -630,8 +618,6 @@ gmrf_model <- combo_model(
         shrinkage = multiplicative_gamma()
     ),
     treatment_offset = combo_gaussian_component(
-        mean = ~ 0 + target_signature + physchem_pc,
-        beta_precision = gamma_precision(),
         structure = iid(),
         shrinkage = global_half_cauchy()
     ),
@@ -699,10 +685,17 @@ Its hyperparameters are chosen to make the behavior of the candidate models easy
 ```{r synthetic-modelg}
 synthetic_model <- combo_model(
     rank = 3,
-    global_intercept = fixed_intercept(1.15),
+    mean = formula_mean(
+        ~ pathway_activity + growth_rate + target_signature + physchem_pc,
+        beta_mean = c(
+            pathway_activity = 0.42,
+            growth_rate = 0,
+            target_signature = -0.28,
+            physchem_pc = 0
+        ),
+        beta_precision = 1000
+    ),
     cell_offset = combo_gaussian_component(
-        mean = ~ 0 + pathway_activity + growth_rate,
-        beta_precision = fixed_scale(precision = 1000),
         structure = iid(),
         shrinkage = gamma_precision()
     ),
@@ -711,8 +704,6 @@ synthetic_model <- combo_model(
         shrinkage = multiplicative_gamma()
     ),
     treatment_offset = combo_gaussian_component(
-        mean = ~ 0 + target_signature + physchem_pc,
-        beta_precision = fixed_scale(precision = 1000),
         structure = iid(),
         shrinkage = global_half_cauchy()
     ),
@@ -780,12 +771,13 @@ stopifnot(nrow(single_rows) == 128, nrow(pair_rows) == 192, nrow(screen) == 320)
 ```
 
 We draw one latent conditional mean and one noisy synthetic response for each
-experiment from `synthetic_model` using `prior_predict()`. The feature-coefficient
-priors are centered on the intended cell and compound signals through `beta_offset`;
-all other coefficients retain their zero-centered priors. Here, `0.42` and `-0.28`
-are standardized-scale coefficients rather than raw-covariate slopes. Reusing
-the seed for these single-draw calls keeps the latent state identical; only the
-response draw includes Gaussian observation noise.
+experiment from `synthetic_model` using `prior_predict()`. The global
+feature-coefficient prior is centered on the intended cell and compound signals;
+the nuisance coefficients remain zero-centered. Here, `0.42` and `-0.28` are
+raw-covariate slopes. The formula intercept has a flat fitting prior, so prior
+prediction receives the intended value explicitly. Reusing the seed for these
+single-draw calls keeps the latent state identical; only the response draw
+includes Gaussian observation noise.
 
 ```{r generate-responsesg}
 screen$true_mean <- as.numeric(prior_predict(
@@ -795,11 +787,8 @@ screen$true_mean <- as.numeric(prior_predict(
     compound_data = compound_data,
     draws = 1,
     seed = 20260828,
-    type = "mean",
-    beta_offset = list(
-        cell_offset = c(pathway_activity = 0.42),
-        treatment_offset = c(target_signature = -0.28)
-    )
+    intercept = 1.15,
+    type = "mean"
 ))
 
 screen$modeled_response <- as.numeric(prior_predict(
@@ -809,10 +798,7 @@ screen$modeled_response <- as.numeric(prior_predict(
     compound_data = compound_data,
     draws = 1,
     seed = 20260828,
-    beta_offset = list(
-        cell_offset = c(pathway_activity = 0.42),
-        treatment_offset = c(target_signature = -0.28)
-    )
+    intercept = 1.15
 ))
 
 # convert logit-scale responses to viability
@@ -1051,15 +1037,15 @@ ggplot(shrinkage_summary, aes(x = factor(dimension), y = posterior_mean)) +
 
 ### Metadata-effect estimates
 
-Metadata formulas affect additive offsets only. Their coefficients are on the
-internally standardized feature scale. Because the synthetic responses are a
-prior-predictive draw rather than a stored parameter draw, this summary is an
-illustration of posterior estimation, not a parameter-recovery check.
+The metadata formula affects the global response mean, and its coefficients are
+on the raw feature scale. Because the synthetic responses are a prior-predictive
+draw rather than a stored parameter draw, this summary is an illustration of
+posterior estimation, not a parameter-recovery check.
 
 ```{r feature-coefficients}
 feature_map <- subset(
     parameter_map(fits$features),
-    parameter == "mean_coefficient"
+    component == "mean" & parameter == "coefficient"
 )
 feature_draws <- posterior_draws(
     fits$features,

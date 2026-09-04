@@ -39,9 +39,9 @@ A shrinkage specification for \code{\link[=combo_gaussian_component]{combo_gauss
 \code{\link[=gaussian_response]{gaussian_response()}}.
 }
 \description{
-Configure the prior scale of Gaussian component deviations or metadata-mean
-coefficients. All precision parameters use the shape-rate convention where a
-gamma distribution is used.
+Configure the prior scale of zero-centered Gaussian component deviations.
+All precision parameters use the shape-rate convention where a gamma
+distribution is used.
 }
 \details{
 The general horseshoe prior applies to an IID deviation \code{u[n, d]} for entity
@@ -64,7 +64,7 @@ Entity-local scales are available only for IID contexts.
 }
 
 Internally, the corresponding deviation precision is \code{1 / (tau[d]^2 * lambda[n, d]^2)}.
-Thus smaller scales imply stronger shrinkage toward the component mean.
+Thus smaller scales imply stronger shrinkage toward zero.
 
 \code{fixed_scale(precision = p)} fixes the precision multiplier:
 

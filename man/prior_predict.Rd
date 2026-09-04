@@ -12,8 +12,7 @@ prior_predict(
   draws = 100L,
   seed = NULL,
   intercept = NULL,
-  type = c("response", "mean"),
-  beta_offset = list(cell_offset = 0, treatment_offset = 0)
+  type = c("response", "mean")
 )
 }
 \arguments{
@@ -32,18 +31,13 @@ only as described for \code{intercept}.}
 \item{seed}{\code{NULL}, or a positive integer used to initialize the R
 random-number generator.}
 
-\item{intercept}{For a model using \code{\link[=empirical_intercept]{empirical_intercept()}}, an optional
-finite numeric value for the global intercept. It takes precedence over
-the mean of nonmissing responses. If neither is available, an error is
-raised. This argument must be \code{NULL} when the model uses
-\code{\link[=fixed_intercept]{fixed_intercept()}}.}
+\item{intercept}{An optional finite intercept. It overrides the response mean
+for \code{\link[=empirical_mean]{empirical_mean()}} and is required for an intercept-bearing
+\code{\link[=formula_mean]{formula_mean()}}. It must be \code{NULL} for \code{\link[=fixed_mean]{fixed_mean()}} or an intercept-free
+formula.}
 
 \item{type}{Whether to draw replicated \code{response} values including observation
 noise, or latent conditional \code{mean} values.}
-
-\item{beta_offset}{A named list with optional \code{cell_offset} and
-\code{treatment_offset} entries giving prior means for coefficients in the
-cell-offset and treatment-offset mean formulas, respectively.}
 }
 \value{
 A numeric matrix with one row per draw and one column per input design row.
@@ -52,18 +46,6 @@ of \code{\link[=posterior_predict]{posterior_predict()}}; with \code{type = "mea
 }
 \description{
 Draws latent conditional means or replicated responses from the generative prior defined by a \code{\link[=combo_model]{combo_model()}}.
-}
-\details{
-Each \code{beta_offset} entry may be an unnamed numeric scalar, which is recycled,
-or a named numeric vector matched to compiled coefficient names. Omitted
-coefficients and list entries default to zero. A nonzero or named entry
-requires the corresponding component to have coefficients.
-
-Formula-generated model-matrix columns are centered and scaled to unit sample
-standard deviation before coefficients are applied. \code{beta_offset} therefore
-operates on this standardized design scale, not on raw covariates. For an
-ordinary numeric covariate, one coefficient unit is the effect of a one-standard-
-deviation increase, holding the other design columns fixed.
 }
 \examples{
 design <- data.frame(
@@ -75,7 +57,7 @@ design <- data.frame(
 )
 model <- combo_model(
     rank = 1L,
-    global_intercept = fixed_intercept(0)
+    mean = fixed_mean(0)
 )
 prior_predict(model, design, draws = 5L, seed = 123L)
 

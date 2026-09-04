@@ -27,12 +27,12 @@ fit_combo(
 the required columns.}
 
 \item{cell_data}{An optional data frame of cell-level covariates, containing a
-unique, nonmissing \code{cell} key and any covariates used by cell-component
-mean formulas.}
+unique, nonmissing \code{cell} key and any covariates used by the global mean
+formula.}
 
 \item{compound_data}{An optional data frame of compound-level covariates,
 containing a unique, nonmissing \code{drug} key and any covariates used by
-treatment-component mean formulas.}
+the global mean formula.}
 
 \item{engine}{Sampling engine. Currently only \code{"gibbs"} is supported.}
 

@@ -11,8 +11,9 @@ test_that("model and component specifications form the public fit contract", {
     expect_s3_class(local_half_cauchy(), "param_shrinkage")
     expect_s3_class(horseshoe(), "param_shrinkage")
     expect_s3_class(multiplicative_gamma(), "param_shrinkage")
-    expect_s3_class(empirical_intercept(), "param_intercept")
-    expect_s3_class(fixed_intercept(0), "param_intercept")
+    expect_s3_class(empirical_mean(), "combo_mean")
+    expect_s3_class(fixed_mean(0), "combo_mean")
+    expect_s3_class(formula_mean(), "combo_mean")
     expect_s3_class(categorical(), "combo_dose")
     expect_s3_class(nested(), "combo_dose")
     expect_s3_class(gaussian_response(), "combo_family")
@@ -99,7 +100,7 @@ test_that("the default latent-factor model fits every component", {
     expect_true(any(map$component == "treatment_interaction_factors"))
 })
 
-test_that("fit_combo compiles cell and compound metadata means", {
+test_that("component configuration contains only structure and shrinkage", {
     expect_error(
         combo_gaussian_component(
             mean = ~ 0 + feature,
@@ -109,56 +110,8 @@ test_that("fit_combo compiles cell and compound metadata means", {
         "unused argument"
     )
 
-    mean_component <- function() {
-        combo_gaussian_component(
-            mean = ~ 0 + feature,
-            beta_precision = fixed_scale(),
-            shrinkage = fixed_scale()
-        )
-    }
-    model <- combo_model(
-        rank = 1L,
-        cell_offset = mean_component(),
-        cell_factors = NULL,
-        treatment_offset = mean_component(),
-        treatment_main_factors = NULL,
-        treatment_interaction_factors = NULL
-    )
-    expect_named(
-        model$components$cell_offset,
-        c("mean", "beta_precision", "structure", "shrinkage")
-    )
-    expect_false("mean_shrinkage" %in% names(model$components$cell_offset))
-
-    cell_data <- data.frame(cell = c("A", "B"), feature = c(-1, 1))
-    compound_data <- data.frame(drug = c("X", "Y"), feature = c(0, 1))
-    fit <- fit_combo(
-        model,
-        combo_test_data(),
-        cell_data = cell_data,
-        compound_data = compound_data,
-        chains = 1L,
-        iter_warmup = 1L,
-        iter_sampling = 2L,
-        seed = 29L
-    )
-
-    expect_identical(fit$input$cell_data, cell_data)
-    expect_identical(fit$input$compound_data, compound_data)
-    expect_named(fit$draws[[1L]]$components$cell_offset$beta, "feature")
-    expect_named(fit$draws[[1L]]$components$treatment_offset$beta, "feature")
-    expect_equal(fit$draws[[1L]]$components$cell_offset$beta_precision, 1)
-    expect_false(
-        "mean_precision" %in% names(fit$draws[[1L]]$components$cell_offset)
-    )
-    map <- parameter_map(fit)
-    expect_true(any(map$parameter == "beta_precision"))
-    expect_false(any(map$parameter == "mean_precision"))
-    expect_true("cell_offset_beta_precision" %in% map$variable)
-    draws <- posterior_draws(fit)
-    expect_true(
-        "cell_offset_beta_precision" %in% dimnames(draws)$variable
-    )
+    component <- combo_gaussian_component(shrinkage = fixed_scale())
+    expect_named(component, c("structure", "shrinkage"))
 })
 
 test_that("fit_combo validates parallel and progress controls", {

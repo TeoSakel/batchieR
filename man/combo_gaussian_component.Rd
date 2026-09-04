@@ -4,24 +4,10 @@
 \alias{combo_gaussian_component}
 \title{Configure a Gaussian combination-model component}
 \usage{
-combo_gaussian_component(
-  shrinkage,
-  mean = ~0,
-  beta_precision = NULL,
-  structure = NULL
-)
+combo_gaussian_component(shrinkage, structure = NULL)
 }
 \arguments{
 \item{shrinkage}{Deviation-shrinkage specification; see \link{shrinkage_specifications}.}
-
-\item{mean}{One-sided metadata formula for the entity-level mean. Use \code{~0}
-for a zero mean. Formula-generated model-matrix columns are centered and
-scaled to unit sample standard deviation before coefficients are applied.
-Nonzero formulas are supported only for offset components.}
-
-\item{beta_precision}{Precision specification for metadata-mean
-coefficients on this standardized design scale, or \code{NULL}; see
-\link{shrinkage_specifications}.}
 
 \item{structure}{Relationship structure among component entities. \code{NULL}
 selects IID; see \link{context_specifications}.}
@@ -36,18 +22,14 @@ The model slot determines what the term means in the response predictor;
 this function determines how its entity-level values are modeled.
 }
 \details{
-An enabled component separates systematic and residual variation:
+Every enabled component is a zero-centered residual deviation:
 
-\if{html}{\out{<div class="sourceCode">}}\preformatted{component value ~ Gaussian(mean_formula, precision_structure)
+\if{html}{\out{<div class="sourceCode">}}\preformatted{component value ~ Gaussian(0, precision_structure)
 }\if{html}{\out{</div>}}
 \itemize{
-\item \code{mean} defines the feature-informed part. It is currently available only for
-scalar offset components.
-\item \code{beta_precision} regularizes their coefficients of the mean formula if they exist;
-see \link{shrinkage_specifications}.
 \item \code{structure} describes which cell or treatment deviations are related and their
 relative precision. See \link{context_specifications}.
-\item \code{shrinkage} separately controls the magnitude of deviations around the mean;
+\item \code{shrinkage} controls the magnitude of deviations around zero;
 see \link{shrinkage_specifications}.
 }
 }

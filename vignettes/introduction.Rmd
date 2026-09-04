@@ -64,13 +64,14 @@ where `gaussian_response()` specifies the observation precision $\tau$.
 The identity-link linear predictor is
 
 $$
-\eta_{kij} = \alpha + W_{0k} + V_{0i} + V_{0j}
+\eta_{kij} = \mathrm{intercept} + x_{kij}^{\mathsf T}\beta
+    + W_{0k} + V_{0i} + V_{0j}
     + W_k^\top\left(V_{1i} + V_{1j} + V_{2i}\odot V_{2j}\right).
 $$
 
 | Model argument | Symbol | Dimension | Role |
 |:--|:--|:--|:--|
-| `global_intercept` | $\alpha$ | scalar | Overall response level |
+| `mean` | $\mathrm{intercept} + x_{kij}^{\mathsf T}\beta$ | scalar per observation | Overall level and optional metadata regression |
 | `cell_offset` | $W_0$ | $K$ | Baseline differences among cells |
 | `cell_factors` | $W$ | $K \times d$ | Latent characteristics of cells |
 | `treatment_offset` | $V_0$ | $T$ | Treatment effects shared across cells |
@@ -109,7 +110,7 @@ cells <- c("A", "B", "C")
 drugs <- c("X", "Y", "Z", "W")
 
 truth <- list(
-    alpha = 1.5,
+    intercept = 1.5,
     cell_offset = c(A = 0.15, B = -0.10, C = 0),
     cell_factors = matrix(
         c(1, 0.2, 0.2, 1, 0.6, 0.6),
@@ -185,7 +186,7 @@ screen$dose_2 <- ifelse(is.na(screen$drug_2), NA_real_, 1)
 
 linear_predictor <- function(cell, drug_1, drug_2) {
     w <- truth$cell_factors[cell, ]
-    eta <- truth$alpha + truth$cell_offset[cell] +
+    eta <- truth$intercept + truth$cell_offset[cell] +
         truth$treatment_offset[drug_1] +
         sum(w * truth$treatment_main_factors[drug_1, ])
     if (!is.na(drug_2)) {
@@ -242,15 +243,12 @@ model <- combo_model(rank = 2L)
 model
 ```
 
-`combo_model()` assigns a `combo_gaussian_component()` to every model term.
-Each component separates four ideas:
-
-1. `mean` describes a feature-informed mean,
-2. `beta_precision` regularizes its coefficients,
-3. `structure` gives the relative precision geometry among entities, and
-4. `shrinkage` controls deviations around the mean.
-
-The default components have zero means, so no metadata tables are needed here.
+`combo_model()` has one global `mean` specification and assigns a
+`combo_gaussian_component()` to each residual model term. The mean may be the
+observed empirical mean, a fixed scalar, or a formula regression over
+observation, cell, and compound covariates. Each component then supplies a
+zero-centered residual effect, with `structure` defining relationships among
+entities and `shrinkage` controlling its magnitude.
 
 The default `iid()` structure uses independent unit relative precision.
 `categorical()` treats each exact compound-dose pair as a separate treatment;
@@ -262,7 +260,8 @@ dimensionality (2 instead of 100):
 - the `cell_offset` uses gamma precision shrinkage,
 - `cell_factors` use multiplicative-gamma shrinkage
 - `treatment_offset`, `main_factors`, and `interaction_factors` use horseshoe shrinkage.
-- the `global_intercept` is the empirical mean of the observed responses,
+- `mean = empirical_mean()` fixes the intercept at the empirical mean of the
+  observed responses,
 - the Gaussian *observation precision* has a gamma prior
 
 Independent chains can run concurrently. Use `future::availableCores()` to
@@ -437,7 +436,7 @@ remain Gaussian on the fitted logit scale.
 This introduction uses one dose, IID structures, fixed synthetic truth, and a
 short sampler run. See
 `vignette("biologically-informed-models", package = "batchieR")` for a more
-rigorous treatment of prior information through metadata means, shrinkage,
+rigorous treatment of prior information through the global metadata regression, shrinkage,
 dose pooling, and GMRF or tree structures. It also shows how those assumptions
 propagate to prediction and plate ranking. The package also provides other
 posterior interfaces,
