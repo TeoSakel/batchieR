@@ -246,7 +246,7 @@ model
 Each component separates four ideas:
 
 1. `mean` describes a feature-informed mean,
-2. `mean_shrinkage` regularizes its coefficients,
+2. `beta_precision` regularizes its coefficients,
 3. `structure` gives the relative precision geometry among entities, and
 4. `shrinkage` controls deviations around the mean.
 
@@ -436,7 +436,7 @@ remain Gaussian on the fitted logit scale.
 
 This introduction uses one dose, IID structures, fixed synthetic truth, and a
 short sampler run. See
-`vignette("biology-informed-scoring", package = "batchieR")` for a more
+`vignette("biologically-informed-models", package = "batchieR")` for a more
 rigorous treatment of prior information through metadata means, shrinkage,
 dose pooling, and GMRF or tree structures. It also shows how those assumptions
 propagate to prediction and plate ranking. The package also provides other
