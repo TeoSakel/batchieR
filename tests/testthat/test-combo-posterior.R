@@ -265,3 +265,16 @@ test_that("LOO-PIT returns a calibration plot", {
     ))
     expect_s3_class(plot, "ggplot")
 })
+
+test_that("prediction observation flags use strict scalar logical validation", {
+    fit <- combo_test_fit()
+    for (value in list(NULL, logical(), c(TRUE, FALSE), NA, 0, 1L, "TRUE", list(TRUE))) {
+        expect_error(predict(fit, observation = value),
+            "observation must be TRUE or FALSE", class = "rlang_error")
+    }
+    expect_equal(predict(fit, observation = FALSE), posterior_epred(fit))
+    set.seed(17)
+    expected <- posterior_predict(fit)
+    set.seed(17)
+    expect_identical(predict(fit, observation = TRUE), expected)
+})

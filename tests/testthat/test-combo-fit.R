@@ -2,6 +2,8 @@ test_that("model and component specifications form the public fit contract", {
     model <- combo_test_model()
 
     expect_s3_class(model, "combo_model")
+    expect_identical(combo_model()$rank, 12L)
+    expect_identical(combo_model(rank = 2L)$rank, 2L)
     expect_s3_class(model$components$cell_offset, "combo_gaussian_component")
     expect_s3_class(model$components$cell_offset, "combo_component")
     expect_s3_class(iid(), "structural_prior")

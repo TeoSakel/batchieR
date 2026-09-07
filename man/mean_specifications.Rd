@@ -16,7 +16,8 @@ formula_mean(formula = ~1, beta_mean = 0, beta_precision = 1)
 \arguments{
 \item{value}{A finite numeric scalar.}
 
-\item{formula}{A one-sided formula.}
+\item{formula}{A one- or two-sided formula. Any left-hand side is ignored as
+an outcome but excluded from \code{.} expansion.}
 
 \item{beta_mean}{A finite scalar or named numeric vector giving the prior
 mean of non-intercept coefficients.}
@@ -32,7 +33,9 @@ A global-mean specification for \code{\link[=combo_model]{combo_model()}}.
 \description{
 \code{empirical_mean()} fixes the intercept at the mean of the observed responses.
 \code{fixed_mean()} fixes it at a supplied value. \code{formula_mean()} defines a
-fixed-effect regression using observation, cell, and compound metadata.
+fixed-effect regression using observation, cell, and compound metadata. It
+accepts one- or two-sided formulas; a left-hand side is ignored as an outcome
+but remains excluded from \code{.} expansion.
 }
 \details{
 Formula terms retain the units and contrasts produced by \code{\link[stats:model.matrix]{stats::model.matrix()}};

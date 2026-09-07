@@ -14,15 +14,28 @@ is_invalid_key <- function(x) {
     anyNA(x) || any(!nzchar(x)) || anyDuplicated(x)
 }
 
+# Scalar predicates return a single boolean without coercion or conditions.
+is_logical <- function(x) {
+    is.logical(x) && length(x) == 1L && !is.na(x)
+}
+
+is_number <- function(x) {
+    is.numeric(x) && !is.complex(x) && length(x) == 1L && is.finite(x)
+}
+
+is_positive_number <- function(x) {
+    is_number(x) && x > 0
+}
+
 param_scalar_positive <- function(x, label) {
-    if (length(x) != 1L || is.na(x) || !is.finite(x) || x <= 0) {
+    if (!is_positive_number(x)) {
         cli::cli_abort("{label} must be one finite positive number")
     }
     as.numeric(x)
 }
 
 is_integer <- function(x) {
-    is.numeric(x) && !is.na(x) && is.finite(x) && x == as.integer(x)
+    is_number(x) && abs(x) <= .Machine$integer.max && x == trunc(x)
 }
 
 is_positive_integer <- function(x) {

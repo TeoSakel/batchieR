@@ -33,7 +33,7 @@
 #' [dose_specifications], and [gaussian_response()].
 #'
 #' @param rank Positive integer shared latent dimension of `cell_factors`,
-#'   `treatment_main_factors`, and `treatment_interaction_factors`.
+#'   `treatment_main_factors`, and `treatment_interaction_factors`. Defaults to 12.
 #' @param mean Overall response mean or fixed-effect regression; see
 #'   [mean_specifications].
 #' @param cell_offset Component for cell-specific baselines (`W0`), or `NULL`.
@@ -52,7 +52,7 @@
 #' model
 #' @export
 combo_model <- function(
-    rank = 2L,
+    rank = 12L,
     mean = empirical_mean(),
     cell_offset = combo_gaussian_component(shrinkage = gamma_precision(shape = 1.1, rate = 1.1)),
     cell_factors = combo_gaussian_component(
@@ -473,7 +473,9 @@ gaussian_response <- function(
 #'
 #' `empirical_mean()` fixes the intercept at the mean of the observed responses.
 #' `fixed_mean()` fixes it at a supplied value. `formula_mean()` defines a
-#' fixed-effect regression using observation, cell, and compound metadata.
+#' fixed-effect regression using observation, cell, and compound metadata. It
+#' accepts one- or two-sided formulas; a left-hand side is ignored as an outcome
+#' but remains excluded from `.` expansion.
 #'
 #' Formula terms retain the units and contrasts produced by [stats::model.matrix()];
 #' no automatic centering or scaling is applied. The formula intercept, when
@@ -489,7 +491,8 @@ gaussian_response <- function(
 #' `combo_model` to inspect the exact coefficient names and raw-scale design.
 #'
 #' @param value A finite numeric scalar.
-#' @param formula A one-sided formula.
+#' @param formula A one- or two-sided formula. Any left-hand side is ignored as
+#'   an outcome but excluded from `.` expansion.
 #' @param beta_mean A finite scalar or named numeric vector giving the prior
 #'   mean of non-intercept coefficients.
 #' @param beta_precision A positive scalar, named positive vector, or named
@@ -509,8 +512,7 @@ empirical_mean <- function() {
 #' @rdname mean_specifications
 #' @export
 fixed_mean <- function(value) {
-    if (!is.numeric(value) || length(value) != 1L || is.na(value) ||
-            !is.finite(value)) {
+    if (!is_number(value)) {
         cli::cli_abort("value must be one finite number")
     }
     structure(
@@ -526,8 +528,8 @@ formula_mean <- function(
     beta_mean = 0,
     beta_precision = 1
 ) {
-    if (!inherits(formula, "formula") || length(formula) != 2L) {
-        cli::cli_abort("formula must be a one-sided formula")
+    if (!inherits(formula, "formula") || !length(formula) %in% 2:3) {
+        cli::cli_abort("formula must be a one- or two-sided formula")
     }
     valid_beta_mean <- is.numeric(beta_mean) && is.null(dim(beta_mean)) &&
         length(beta_mean) > 0L && !anyNA(beta_mean) && all(is.finite(beta_mean))

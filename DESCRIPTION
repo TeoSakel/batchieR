@@ -22,16 +22,19 @@ Imports:
     cli,
     future,
     future.apply,
+    generics,
     Matrix,
     matrixStats,
     methods,
-    progressr
+    posterior,
+    progressr,
+    tibble
 Suggests:
     bayesplot (>= 1.13.0),
+    broom,
     ggplot2,
     knitr,
     loo (>= 2.0.0),
-    posterior,
     remotes,
     rmarkdown,
     testthat (>= 3.0.0)

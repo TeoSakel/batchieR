@@ -43,7 +43,7 @@ test_that("global mean constructors validate their natural API", {
     expect_identical(fixed_mean(1.25)$value, 1.25)
     expect_identical(deparse(formula_mean()$formula), "~1")
     expect_error(fixed_mean("one"), "finite number")
-    expect_error(formula_mean(y ~ x), "one-sided")
+    expect_identical(deparse(formula_mean(y ~ x)$formula), "y ~ x")
     expect_error(formula_mean(beta_mean = NA_real_), "finite numeric")
     expect_error(formula_mean(beta_precision = -1), "positive")
     expect_error(formula_mean(beta_precision = c(1, 2)), "must have")
@@ -55,6 +55,17 @@ test_that("global mean constructors validate their natural API", {
     expect_false(any(c(
         "empirical_intercept", "fixed_intercept"
     ) %in% exports))
+})
+
+test_that("formula mean ignores the left-hand side and excludes it from dot", {
+    data <- mean_test_data()
+    data$excluded <- seq_len(nrow(data))
+    model <- mean_only_fit_model(formula_mean(excluded ~ .))
+
+    X <- model.matrix(model, data)
+
+    expect_identical(colnames(X), c("(Intercept)", "obs_x"))
+    expect_false("excluded" %in% colnames(X))
 })
 
 test_that("one design combines observation, cell, and additive compound terms", {

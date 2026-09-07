@@ -158,8 +158,7 @@ prior_intercept <- function(model, data, intercept) {
 }
 
 prior_validate_intercept <- function(intercept) {
-    if (!is.numeric(intercept) || length(intercept) != 1L ||
-            is.na(intercept) || !is.finite(intercept)) {
+    if (!is_number(intercept)) {
         cli::cli_abort("intercept must be NULL or one finite numeric value")
     }
     as.numeric(intercept)

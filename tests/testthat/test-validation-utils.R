@@ -80,3 +80,60 @@ test_that("numerical fallback reports a cli warning", {
     )
     expect_identical(value, 7)
 })
+
+test_that("number predicates separate finite scalars from positivity", {
+    for (value in list(-2L, -0.5, 0, 0.5, 2L, .Machine$double.xmax)) {
+        expect_identical(is_number(value), TRUE)
+        expect_identical(is_positive_number(value), value > 0)
+    }
+    invalid <- list(NULL, numeric(), c(1, 2), NA_real_, NaN, Inf, -Inf,
+        TRUE, FALSE, "1", list(1), factor("1"), 1 + 1i)
+    for (value in invalid) {
+        for (predicate in list(is_number, is_positive_number, is_integer,
+            is_positive_integer, is_nonnegative_integer)) {
+            expect_identical(predicate(value), FALSE)
+        }
+    }
+})
+
+test_that("integer predicates require representable scalar integers", {
+    for (value in c(-.Machine$integer.max, -1, 0, 1, .Machine$integer.max)) {
+        expect_identical(is_integer(value), TRUE)
+        expect_identical(is_positive_integer(value), value > 0)
+        expect_identical(is_nonnegative_integer(value), value >= 0)
+    }
+    for (value in c(-0.5, 0.5, .Machine$integer.max + 1, -.Machine$integer.max - 1)) {
+        expect_identical(is_integer(value), FALSE)
+        expect_identical(is_positive_integer(value), FALSE)
+        expect_identical(is_nonnegative_integer(value), FALSE)
+    }
+})
+
+test_that("numeric parameter helpers retain conversion and targeted conditions", {
+    expect_identical(param_scalar_positive(2L, "scale"), 2)
+    expect_identical(param_positive_integer(2, "count"), 2L)
+    for (value in list(0, -1, NA_real_, Inf, NULL, c(1, 2), TRUE, "1", list(1), 1 + 1i)) {
+        expect_error(param_scalar_positive(value, "scale"),
+            "scale must be one finite positive number", class = "rlang_error")
+    }
+    expect_error(param_positive_integer(.Machine$integer.max + 1, "count"),
+        "count must be one positive integer", class = "rlang_error")
+    for (value in list(NULL, c(1, 2), TRUE, "1", list(1), 1 + 1i)) {
+        expect_error(fixed_mean(value), "value must be one finite number",
+            class = "rlang_error")
+        expect_error(prior_validate_intercept(value), "intercept must be NULL or one finite numeric value",
+            class = "rlang_error")
+    }
+    expect_identical(fixed_mean(-2L)$value, -2)
+    expect_identical(prior_validate_intercept(-2L), -2)
+})
+
+test_that("logical predicates accept only nonmissing scalar flags", {
+    for (value in list(TRUE, FALSE, c(flag = TRUE))) {
+        expect_identical(is_logical(value), TRUE)
+    }
+    for (value in list(NULL, logical(), c(TRUE, FALSE), NA, NA_real_,
+        0, 1L, "TRUE", list(TRUE), factor("TRUE"))) {
+        expect_identical(is_logical(value), FALSE)
+    }
+})

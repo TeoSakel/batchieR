@@ -163,26 +163,46 @@ fit_combo <- function(
 
 #' Inspect a fitted combination-response model
 #'
-#' `print()` reports sampling dimensions and modeled entities. `summary()`
-#' returns posterior quantiles of sampler RMSE and observation precision.
+#' `print()` reports sampling dimensions, modeled entities, maximum R-hat,
+#' minimum bulk and tail effective sample sizes (ESS), and counts of unavailable
+#' diagnostics across public posterior variables.
+#' `summary()` adds a per-variable [posterior::summarize_draws()] table with
+#' means, medians, standard deviations, MADs, 5% and 95% quantiles, R-hat,
+#' bulk ESS, and tail ESS by default. Chain boundaries are preserved.
+#'
+#' Diagnostics may be unavailable for short or constant chains. Unavailable
+#' values are retained in the summary and counted separately in `print()`.
+#' Diagnostics for latent factors can also reflect their non-identifiability.
+#' The summary table is printed with all rows and columns by default.
+#' Use `print(summary(fit), n = 20)` to limit the displayed rows.
 #'
 #' @param x,object A `combo_fit` object.
-#' @param ... Reserved for future methods.
+#' @param components,variable,include Selection arguments passed to
+#'   [posterior_draws()] by `summary()`.
+#' @param ... For `summary()`, arguments passed to
+#'   [posterior::summarize_draws()]. Supplying summary functions replaces its
+#'   default measures. For `print.summary.combo_fit()`, table printing options
+#'   passed to `print()` (such as `n` and `width`). Unused by `print.combo_fit()`.
 #' @return `print()` returns its input invisibly. `summary()` returns a
-#'   `summary.combo_fit` object.
+#'   `summary.combo_fit` object retaining the fit metadata and RMSE and
+#'   observation-precision quantiles, with a `posterior_summary` element
+#'   containing the draws summary table.
 #' @name combo_fit_methods
 NULL
 
 #' @rdname combo_fit_methods
 #' @export
 print.combo_fit <- function(x, ...) {
+    diagnostics <- posterior::summarize_draws(
+        posterior::as_draws_array(x),
+        posterior::default_convergence_measures()
+    )
+    chain_steps <- x[["sampling"]][["iter_warmup"]] + x[["sampling"]][["iter_sampling"]]
     output <- cli::cli_format_method({
         cli::cli_text("<combo_fit>")
         cli::cli_text("engine: {x[['engine']]}")
         cli::cli_text("chains: {x[['sampling']][['chains']]}")
-        cli::cli_text(
-            "iterations: {x[['sampling']][['iter_warmup']] + x[['sampling']][['iter_sampling']]} per chain"
-        )
+        cli::cli_text("iterations: {chain_steps} per chain")
         cli::cli_text("warmup: {x[['sampling']][['iter_warmup']]}")
         cli::cli_text("sampling: {x[['sampling']][['iter_sampling']]}")
         cli::cli_text("thin: {x[['sampling']][['thin']]}")
@@ -190,6 +210,10 @@ print.combo_fit <- function(x, ...) {
         cli::cli_text("observations: {length(x[['compiled']][['observed_rows']])}")
         cli::cli_text("cells: {length(x[['compiled']][['cells']])}")
         cli::cli_text("treatments: {nrow(x[['compiled']][['treatments']])}")
+        cli::cli_text("Convergence diagnostics ({nrow(diagnostics)} public variables):")
+        cli::cli_text("max R-hat: {combo_diagnostic_range(diagnostics$rhat, max)}")
+        cli::cli_text("min bulk ESS: {combo_diagnostic_range(diagnostics$ess_bulk, min)}")
+        cli::cli_text("min tail ESS: {combo_diagnostic_range(diagnostics$ess_tail, min)}")
     })
     writeLines(output)
     invisible(x)
@@ -197,28 +221,31 @@ print.combo_fit <- function(x, ...) {
 
 #' @rdname combo_fit_methods
 #' @export
-summary.combo_fit <- function(object, ...) {
-    rmse <- vapply(
-        object$draws,
-        function(draw) draw$last_rmse,
-        numeric(1)
+summary.combo_fit <- function(
+    object,
+    ...,
+    components = NULL,
+    variable = NULL,
+    include = c("public", "all")
+) {
+    posterior_summary <- posterior::summarize_draws(
+        posterior::as_draws_array(
+            object, components = components, variable = variable, include = include
+        ),
+        ...
     )
-    precision <- vapply(
-        object$draws,
-        function(draw) draw$precision,
-        numeric(1)
-    )
+    rmse <- vapply(object$draws, "[[", numeric(1), "last_rmse")
+    precision <- vapply(object$draws, "[[", numeric(1), "precision")
+    probs <- c(0.05, 0.5, 0.95)
     result <- list(
         engine = object$engine,
         n_observed = length(object$compiled$observed_rows),
         n_cells = length(object$compiled$cells),
         n_treatments = nrow(object$compiled$treatments),
         n_draws = length(object$draws),
-        rmse = stats::quantile(rmse, c(0.05, 0.5, 0.95)),
-        observation_precision = stats::quantile(
-            precision,
-            c(0.05, 0.5, 0.95)
-        )
+        posterior_summary = posterior_summary,
+        rmse = stats::quantile(rmse, probs),
+        observation_precision = stats::quantile(precision, probs)
     )
     class(result) <- "summary.combo_fit"
     result
@@ -239,5 +266,16 @@ print.summary.combo_fit <- function(x, ...) {
         )
     })
     writeLines(output)
+    options <- list(...)
+    if (is.null(options$n)) options$n <- Inf
+    if (is.null(options$width)) options$width <- Inf
+    do.call(print, c(list(x = x$posterior_summary), options))
     invisible(x)
+}
+
+# Keep infinite diagnostics visible; omit only unavailable values from extrema.
+combo_diagnostic_range <- function(x, fun) {
+    available <- !is.na(x)
+    value <- if (any(available)) format(fun(x[available]), digits = 4) else "NA"
+    paste0(value, " (", sum(!available), " unavailable)")
 }

@@ -92,7 +92,7 @@ predict.combo_fit <- function(
     ...
 ) {
     type <- match.arg(type)
-    if (!is.logical(observation) || length(observation) != 1L || is.na(observation)) {
+    if (!is_logical(observation)) {
         cli::cli_abort("observation must be TRUE or FALSE")
     }
     predictions <- if (isTRUE(observation)) {
@@ -753,7 +753,7 @@ combo_ppc_error_plot <- function(object, observed, yrep, x, group, stat, ...) {
     stat_fn <- match.fun(stat)
     error <- vapply(seq_along(observed$response), function(index) {
         value <- stat_fn(observed$response[index] - yrep[, index])
-        if (!is.numeric(value) || length(value) != 1L || !is.finite(value)) {
+        if (!is_number(value)) {
             cli::cli_abort("{.arg stat} must return one finite numeric predictive-error summary.")
         }
         value

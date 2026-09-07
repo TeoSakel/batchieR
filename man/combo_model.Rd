@@ -6,7 +6,7 @@
 \title{Specify a combination-response model}
 \usage{
 combo_model(
-  rank = 2L,
+  rank = 12L,
   mean = empirical_mean(),
   cell_offset = combo_gaussian_component(shrinkage = gamma_precision(shape = 1.1, rate =
     1.1)),
@@ -27,7 +27,7 @@ combo_model(
 }
 \arguments{
 \item{rank}{Positive integer shared latent dimension of \code{cell_factors},
-\code{treatment_main_factors}, and \code{treatment_interaction_factors}.}
+\code{treatment_main_factors}, and \code{treatment_interaction_factors}. Defaults to 12.}
 
 \item{mean}{Overall response mean or fixed-effect regression; see
 \link{mean_specifications}.}
