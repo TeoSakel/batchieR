@@ -57,3 +57,14 @@ test_that("short, single, constant and separated chains retain diagnostic behavi
     expect_output(print(fit), "1 unavailable", fixed = TRUE)
     expect_identical(combo_diagnostic_range(c(NA_real_, Inf), max), "Inf (1 unavailable)")
 })
+
+
+test_that("print and summary report the configured model rank", {
+    for (rank in c(1L, 2L)) {
+        fit <- combo_test_fit(model = combo_model(rank = rank))
+        result <- summary(fit)
+        expect_identical(result$rank, rank)
+        expect_output(print(fit), paste0("rank: ", rank), fixed = TRUE)
+        expect_output(print(result), paste0("rank: ", rank), fixed = TRUE)
+    }
+})

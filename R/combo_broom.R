@@ -87,7 +87,8 @@ tidy.combo_fit <- function(
 #' @inheritParams tidy.combo_fit
 #' @return A one-row tibble with `nobs` (observed responses), `n_cells`,
 #'   `n_treatments`, `n_chains`, `n_draws` (total retained draws),
-#'   `n_variables` (public variables), `sigma` (posterior mean observation SD),
+#'   `n_variables` (public variables), `rank` (configured latent dimension),
+#'   `sigma` (posterior mean observation SD),
 #'   `sampler_rmse` (mean retained sampler RMSE), `rhat_max`, `ess_bulk_min`,
 #'   `ess_tail_min`, and unavailable counts `rhat_unavailable`,
 #'   `ess_bulk_unavailable`, and `ess_tail_unavailable`.
@@ -105,6 +106,7 @@ glance.combo_fit <- function(x, ...) {
         n_chains = x$sampling$chains,
         n_draws = length(x$draws),
         n_variables = nrow(diagnostics),
+        rank = x$model$rank,
         sigma = mean(vapply(x$draws, function(draw) 1 / sqrt(draw$precision), numeric(1))),
         sampler_rmse = mean(vapply(x$draws, function(draw) draw$last_rmse, numeric(1))),
         rhat_max = combo_broom_extreme(diagnostics$rhat, max),

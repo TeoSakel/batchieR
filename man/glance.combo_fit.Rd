@@ -14,7 +14,8 @@
 \value{
 A one-row tibble with \code{nobs} (observed responses), \code{n_cells},
 \code{n_treatments}, \code{n_chains}, \code{n_draws} (total retained draws),
-\code{n_variables} (public variables), \code{sigma} (posterior mean observation SD),
+\code{n_variables} (public variables), \code{rank} (configured latent dimension),
+\code{sigma} (posterior mean observation SD),
 \code{sampler_rmse} (mean retained sampler RMSE), \code{rhat_max}, \code{ess_bulk_min},
 \code{ess_tail_min}, and unavailable counts \code{rhat_unavailable},
 \code{ess_bulk_unavailable}, and \code{ess_tail_unavailable}.

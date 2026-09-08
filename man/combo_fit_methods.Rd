@@ -32,12 +32,13 @@ passed to \code{print()} (such as \code{n} and \code{width}). Unused by \code{pr
 }
 \value{
 \code{print()} returns its input invisibly. \code{summary()} returns a
-\code{summary.combo_fit} object retaining the fit metadata and RMSE and
+\code{summary.combo_fit} object retaining the fit metadata (including \code{rank},
+the configured latent dimension) and RMSE and
 observation-precision quantiles, with a \code{posterior_summary} element
 containing the draws summary table.
 }
 \description{
-\code{print()} reports sampling dimensions, modeled entities, maximum R-hat,
+\code{print()} reports sampling dimensions, model rank, modeled entities, maximum R-hat,
 minimum bulk and tail effective sample sizes (ESS), and counts of unavailable
 diagnostics across public posterior variables.
 \code{summary()} adds a per-variable \code{\link[posterior:summarize_draws]{posterior::summarize_draws()}} table with

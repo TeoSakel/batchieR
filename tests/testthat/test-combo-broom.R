@@ -64,10 +64,13 @@ test_that("glance reports dimensions and diagnostics without removing unavailabl
     expect_s3_class(result, "tbl_df")
     expect_identical(names(result), c(
         "nobs", "n_cells", "n_treatments", "n_chains", "n_draws", "n_variables",
-        "sigma", "sampler_rmse", "rhat_max", "ess_bulk_min", "ess_tail_min",
+        "rank", "sigma", "sampler_rmse", "rhat_max", "ess_bulk_min", "ess_tail_min",
         "rhat_unavailable", "ess_bulk_unavailable", "ess_tail_unavailable"
     ))
     expect_identical(nrow(result), 1L)
+    expect_identical(result$rank, 1L)
+    higher_rank <- combo_test_fit(model = combo_model(rank = 2L))
+    expect_identical(glance(higher_rank)$rank, 2L)
     expect_identical(unname(unlist(result[1:6])), c(5L, 2L, 2L, 2L, 80L, nrow(diagnostics)))
     expect_equal(result$sigma, mean(vapply(fit$draws, function(x) 1 / sqrt(x$precision), numeric(1))))
     expect_equal(result$sampler_rmse, mean(vapply(fit$draws, function(x) x$last_rmse, numeric(1))))

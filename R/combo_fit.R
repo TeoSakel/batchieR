@@ -169,7 +169,7 @@ fit_combo <- function(
 
 #' Inspect a fitted combination-response model
 #'
-#' `print()` reports sampling dimensions, modeled entities, maximum R-hat,
+#' `print()` reports sampling dimensions, model rank, modeled entities, maximum R-hat,
 #' minimum bulk and tail effective sample sizes (ESS), and counts of unavailable
 #' diagnostics across public posterior variables.
 #' `summary()` adds a per-variable [posterior::summarize_draws()] table with
@@ -190,7 +190,8 @@ fit_combo <- function(
 #'   default measures. For `print.summary.combo_fit()`, table printing options
 #'   passed to `print()` (such as `n` and `width`). Unused by `print.combo_fit()`.
 #' @return `print()` returns its input invisibly. `summary()` returns a
-#'   `summary.combo_fit` object retaining the fit metadata and RMSE and
+#'   `summary.combo_fit` object retaining the fit metadata (including `rank`,
+#'   the configured latent dimension) and RMSE and
 #'   observation-precision quantiles, with a `posterior_summary` element
 #'   containing the draws summary table.
 #' @name combo_fit_methods
@@ -207,6 +208,7 @@ print.combo_fit <- function(x, ...) {
     output <- cli::cli_format_method({
         cli::cli_text("<combo_fit>")
         cli::cli_text("engine: {x[['engine']]}")
+        cli::cli_text("rank: {x[['model']][['rank']]}")
         cli::cli_text("chains: {x[['sampling']][['chains']]}")
         cli::cli_text("iterations: {chain_steps} per chain")
         cli::cli_text("warmup: {x[['sampling']][['iter_warmup']]}")
@@ -245,6 +247,7 @@ summary.combo_fit <- function(
     probs <- c(0.05, 0.5, 0.95)
     result <- list(
         engine = object$engine,
+        rank = object$model$rank,
         n_observed = length(object$compiled$observed_rows),
         n_cells = length(object$compiled$cells),
         n_treatments = nrow(object$compiled$treatments),
@@ -263,6 +266,7 @@ print.summary.combo_fit <- function(x, ...) {
     output <- cli::cli_format_method({
         cli::cli_text("Combination-model Gibbs fit")
         cli::cli_text("engine: {x[['engine']]}")
+        cli::cli_text("rank: {x[['rank']]}")
         cli::cli_text("observations: {x[['n_observed']]}")
         cli::cli_text("cells: {x[['n_cells']]}")
         cli::cli_text("treatments: {x[['n_treatments']]}")
