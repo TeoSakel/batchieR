@@ -59,8 +59,10 @@ use independent multisession workers. The default follows the \code{mc.cores}
 option.}
 
 \item{refresh}{Nonnegative integer controlling how often each chain reports
-sampling progress through \code{progressr}. Set to \code{0} to disable progress
-output.}
+sampling progress through \code{progressr}. Terminals with multiline cursor
+support and RStudio 2026.06.0 or later show one live bar per chain. Other
+consoles print separate per-chain iteration updates. Set to \code{0} to
+disable progress output and the completion summary.}
 }
 \value{
 A \code{combo_fit} object containing the original and compiled model,
@@ -80,4 +82,8 @@ at least one response must be observed.
 Each chain is initialized independently. After warmup, the sampler performs
 \code{iter_sampling} transitions and retains every \code{thin}th state, for
 \code{floor(iter_sampling / thin)} draws per chain.
+
+With progress enabled, successful fits end with a timing summary. Mean chain
+time includes initialization, warmup, and sampling; total elapsed time also
+includes worker setup and result collection, but excludes model compilation.
 }

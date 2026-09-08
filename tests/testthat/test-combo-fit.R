@@ -194,6 +194,85 @@ test_that("fit_combo progress can be shown or disabled", {
     expect_identical(future::nbrOfWorkers(), 1L)
 })
 
+test_that("progress keeps separate chain updates without changing draws", {
+    local_mocked_bindings(combo_progress_terminal = function() FALSE)
+    quiet <- combo_test_fit(refresh = 0L)
+    for (workers in 1:2) {
+        output <- capture.output(
+            visible <- combo_test_fit(parallel_chains = workers, refresh = 1L),
+            type = "message"
+        )
+        for (chain in 1:2) {
+            lines <- output[startsWith(output, paste0("Chain ", chain, " "))]
+            expected <- sprintf(
+                "Chain %d Iteration: %d / 6 [%3.0f%%] (%s)",
+                chain, c(0:2, 2:6), floor(100 * c(0:2, 2:6) / 6),
+                c(rep("warmup", 3), rep("sampling", 5))
+            )
+            expect_identical(lines, expected)
+        }
+        expect_false(any(grepl("\r", output)))
+        expect_match(tail(output, 3L)[[1]], "All 2 chains finished successfully.", fixed = TRUE)
+        expect_match(tail(output, 2L)[[1]], "^Mean chain execution time: [0-9]+\\.[0-9] seconds\\.$")
+        expect_match(tail(output, 1L), "^Total execution time: [0-9]+\\.[0-9] seconds\\.$")
+        expect_identical(visible$draws, quiet$draws)
+        expect_identical(visible$chain_id, quiet$chain_id)
+        expect_identical(visible$iteration, quiet$iteration)
+    }
+    expect_identical(future::nbrOfWorkers(), 1L)
+})
+
+test_that("terminal progress keeps each live chain on its own row", {
+    local_mocked_bindings(combo_progress_terminal = function() TRUE)
+    quiet <- combo_test_fit(refresh = 0L)
+    for (workers in 1:2) {
+        output <- capture.output(
+            visible <- combo_test_fit(parallel_chains = workers, refresh = 1L),
+            type = "message"
+        )
+        expect_match(tail(output, 3L)[[1]], "All 2 chains finished successfully.", fixed = TRUE)
+        # Each repaint moves up exactly two rows and replaces those same rows.
+        bar_output <- head(output, -3L)
+        frames <- strsplit(paste(bar_output, collapse = "\n"), "\033[2A", fixed = TRUE)[[1]]
+        frames <- lapply(frames, function(frame) {
+            rows <- strsplit(frame, "\n", fixed = TRUE)[[1]]
+            rows <- rows[nzchar(rows)]
+            sub("\r\033[2K", "", rows, fixed = TRUE)
+        })
+        expect_gt(length(frames), 2L)
+        for (rows in frames) {
+            expect_length(rows, 2L)
+            expect_true(startsWith(rows[[1]], "Chain 1:"))
+            expect_true(startsWith(rows[[2]], "Chain 2:"))
+        }
+        expect_true(all(grepl("100%$", tail(frames, 1L)[[1]])))
+        # Completion of one chain must not make the other chain appear complete.
+        expect_true(any(vapply(frames, function(rows) {
+            sum(grepl("100%$", rows)) == 1L
+        }, logical(1))))
+        expect_identical(visible$draws, quiet$draws)
+    }
+    expect_silent(combo_test_fit(refresh = 0L))
+})
+
+test_that("interrupted terminal progress retains actual chain counts", {
+    local_mocked_bindings(combo_progress_terminal = function() TRUE)
+    output <- capture.output(
+        expect_error(
+            progressr::with_progress({
+                progress <- progressr::progressor(steps = 8L)
+                progress(amount = 1L, chain = 1L, current = 1L, phase = "sampling")
+                stop("interrupted test fit")
+            }, enable = TRUE, delay_conditions = c("message", "warning"),
+            handlers = combo_progress_handler(2L, 4L, TRUE)),
+            "interrupted test fit"
+        ),
+        type = "message"
+    )
+    expect_match(paste(output, collapse = "\n"), "25%")
+    expect_false(any(grepl("100%", output)))
+})
+
 test_that("parallel chain failures identify the chain", {
     expect_error(
         batchieR:::combo_run_chains(

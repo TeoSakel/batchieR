@@ -15,6 +15,10 @@
 #' `iter_sampling` transitions and retains every `thin`th state, for
 #' `floor(iter_sampling / thin)` draws per chain.
 #'
+#' With progress enabled, successful fits end with a timing summary. Mean chain
+#' time includes initialization, warmup, and sampling; total elapsed time also
+#' includes worker setup and result collection, but excludes model compilation.
+#'
 #' @param model A combination-model specification created by `combo_model()`.
 #' @param data A data frame of combination-screen observations. See Details for
 #'   the required columns.
@@ -41,8 +45,10 @@
 #'   use independent multisession workers. The default follows the `mc.cores`
 #'   option.
 #' @param refresh Nonnegative integer controlling how often each chain reports
-#'   sampling progress through `progressr`. Set to `0` to disable progress
-#'   output.
+#'   sampling progress through `progressr`. Terminals with multiline cursor
+#'   support and RStudio 2026.06.0 or later show one live bar per chain. Other
+#'   consoles print separate per-chain iteration updates. Set to `0` to
+#'   disable progress output and the completion summary.
 #'
 #' @return A `combo_fit` object containing the original and compiled model,
 #'   retained Gibbs-state snapshots in `draws`, chain and iteration indices,
