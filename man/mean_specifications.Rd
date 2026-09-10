@@ -50,4 +50,10 @@ and within-source interactions are supported but cross-source interactions
 are not. Cell terms enter once per observation; compound terms are evaluated
 for each present drug and added. Use \code{\link[stats:model.matrix]{stats::model.matrix()}} on a
 \code{combo_model} to inspect the exact coefficient names and raw-scale design.
+
+If the cell or compound terms, together with the formula intercept when
+present, span every corresponding modeled entity while its offset component
+remains active, \code{\link[=fit_combo]{fit_combo()}} warns that the fixed and residual effects will
+be separated primarily by their priors. This check applies when there are
+terms from that source and uses the rank of its entity-level design matrix.
 }

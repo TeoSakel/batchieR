@@ -7,3 +7,6 @@ experiments/merck/work/
 experiments/merck/results/
 /doc/
 /Meta/
+/vignettes/*_files/
+/vignettes/*.html
+/vignettes/.quarto/

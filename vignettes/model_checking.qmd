@@ -1,0 +1,415 @@
+---
+title: "Checking combination-response models"
+author: "Teo Sakel"
+date: "2026-08-04"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    html-math-method: mathjax
+    theme: none
+    minimal: true
+    embed-resources: true
+vignette: >
+  %\VignetteIndexEntry{Checking combination-response models}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r}
+#| label: setup
+#| include: false
+knitr::opts_chunk$set(
+    collapse = TRUE,
+    comment = "#>",
+    fig.width = 7,
+    fig.height = 4.5
+)
+```
+
+## Introduction
+
+A fitted `batchieR` model works with familiar R tools for inspecting and sharing
+Bayesian results. This vignette follows a small example through:
+
+- [`posterior`](https://mc-stan.org/posterior/) for draw summaries,
+- [`bayesplot`](https://mc-stan.org/bayesplot/) for diagnostic plots,
+- [`loo`](https://mc-stan.org/loo/) for predictive comparisons, and
+- [`broom`](https://broom.tidymodels.org/)-compatible methods for tidy tables.
+
+```{r}
+#| label: load-package
+#| message: false
+library(batchieR)
+library(posterior)
+library(bayesplot)
+library(loo)
+library(ggplot2)
+
+set.seed(20260804)
+```
+
+## Fit two models
+
+We will use a toy combination screen to demonstrate the package interfaces.
+The screen contains three cells (`A`, `B`, `C`) and three compounds (`X`, `Y`, `Z`),
+each tested at two doses. It includes single treatments and all three compound
+pairs, with three replicate measurements for each condition.
+
+We will fit two simple models to the same responses:
+
+- The **additive model** combines individual treatment effects and a cell offset.
+- The **full model** adds an interaction term, allowing the effect of a treatment
+  to depend on its partner and the cell.
+
+By design, we generate the responses from the full model, including its
+interaction effects and measurement noise. The additive model therefore omits
+structure present in the data. This gives us a concrete example for reading the
+diagnostic plots and comparison tables produced by the companion packages.
+
+First, define the two models. Both use the same simple Gaussian priors for
+their shared components and a fixed intercept of 0.7.
+
+```{r}
+#| label: define-models
+iid_component <- combo_gaussian_component(
+    structure = iid(),
+    shrinkage = gamma_precision(shape = 3, rate = 3)
+)
+full_model <- combo_model(
+    rank = 1,
+    mean = fixed_mean(0.7),
+    cell_offset = iid_component,
+    cell_factors = iid_component,
+    treatment_offset = iid_component,
+    treatment_main_factors = NULL,
+    treatment_interaction_factors = iid_component
+)
+full_model
+
+additive_model <- combo_model(
+    rank = 1,
+    mean = fixed_mean(0.7),
+    cell_offset = iid_component,
+    treatment_offset = iid_component,
+    cell_factors = NULL,
+    treatment_main_factors = NULL,
+    treatment_interaction_factors = NULL
+)
+additive_model
+```
+
+Next, construct the screen and use `prior_predict()` to generate one set of
+responses from the full model's prior.
+
+```{r}
+#| label: diagnostic-data
+cells <- c("A", "B", "C")
+drugs <- c("X", "Y", "Z")
+drug_pairs <- c("X:Y", "X:Z", "Y:Z")
+doses <- 1:2
+
+screen <- expand.grid(
+    cell = cells,
+    drug_1 = drugs,
+    dose_1 = doses,
+    drug_2 = c(NA_character_, drugs),
+    dose_2 = c(NA_real_, doses),
+    replicate = 1:3,
+    stringsAsFactors = FALSE
+)
+screen <- subset(
+    screen,
+    (is.na(drug_2) & is.na(dose_2)) |
+        (sprintf("%s:%s", drug_1, drug_2) %in% drug_pairs & !is.na(dose_2))
+)
+screen$type <- ifelse(is.na(screen$drug_2), "single", "combination")
+screen$plate <- paste0(screen$type, "_", screen$replicate)
+screen$response <- prior_predict(full_model, screen, draws = 1)[1, ]
+```
+
+For reproducibility of this vignette, we use a pre-generated copy of this screen
+included with the package. The following chunk replaces `screen` with that saved
+dataset, so the examples below use the same observations on every machine.
+
+```{r}
+#| label: load-pregenerated-screen
+screen <- read.csv(
+    system.file("extdata", "model_checking.csv", package = "batchieR", mustWork = TRUE),
+    stringsAsFactors = FALSE
+)
+```
+
+Finally, fit both models to these same simulated observations.
+
+```{r}
+#| label: diagnostic-fits
+full_fit <- fit_combo(
+    full_model,
+    screen,
+    chains = 4,
+    iter_warmup = 500,
+    iter_sampling = 500,
+    refresh = 0
+)
+additive_fit <- fit_combo(
+    additive_model,
+    screen,
+    chains = 4,
+    iter_warmup = 500,
+    iter_sampling = 500,
+    refresh = 0
+)
+```
+
+## Inspect sampling with posterior and bayesplot
+
+Printing a fit reports the largest R-hat and smallest effective sample sizes
+(ESS) across its public posterior variables. Start here for both models.
+
+```{r}
+#| label: convergence-overview
+print(full_fit)
+print(additive_fit)
+```
+
+- **R-hat** compares sampling chains. Values close to one are desirable;
+  elevated values suggest that chains have not explored the same distribution.
+- **Bulk and tail ESS** indicate how much independent sampling information is
+  available for central summaries and tail estimates. Larger values mean more
+  precise summaries; small values call for more sampling or investigation.
+- **Unavailable diagnostics** need inspection. Fixed parameters can have `NA`
+  diagnostics, so these should not be counted as evidence of convergence.
+
+The `full_fit`'s overview has an elevated maximum R-hat and low minimum ESS.
+
+### Summarize selected parameters
+
+For more fine-grained inspection, `summary()` and `as_draws_array()` provide
+posterior summaries and diagnostics for selected parameters. `summary()` reports
+estimates, uncertainty, and diagnostics by parameter. Use `parameter_map()` to
+find names; here we select the observation standard deviation (`sigma`) and the
+cell offsets as an example.
+
+```{r}
+#| label: convergence-summary
+full_parameters <- parameter_map(full_fit)
+cell_offset_params <- with(
+    full_parameters,
+    variable[component == "cell_offset" & parameter == "value"]
+)
+diagnostic_variables <- c("sigma", cell_offset_params)
+summary(full_fit, variable = diagnostic_variables)
+```
+
+- `mean` and `median` summarize each parameter,
+- `sd` describes its posterior uncertainty, and
+- `q5` to `q95` delimit a central 90% credible interval.
+
+Read `rhat`, `ess_bulk`, and `ess_tail` alongside these estimates to assess
+sampling precision.
+
+As an alternative to `summary()`, the broom-compatible `tidy()` method returns
+parameter summaries and diagnostics in a tibble that can be filtered, plotted,
+or included in reports. `batchieR` exports the generic, so loading `broom` is
+optional for this call.
+
+```{r}
+#| label: tidy-summaries
+parameter_summary <- tidy(full_fit, variable = diagnostic_variables)
+parameter_summary[, c(
+    "term", "estimate", "std.error", "conf.low", "conf.high",
+    "rhat", "ess_bulk", "ess_tail"
+)]
+```
+
+`estimate` is the posterior mean by default, and `conf.low` and `conf.high`
+are the bounds of a 95% credible interval. Here `std.error` is the posterior
+standard deviation, not the Monte Carlo error of the estimate. The diagnostic
+columns have the same meanings as above; the full tibble also carries
+parameter metadata. The [broom documentation](https://broom.tidymodels.org/)
+introduces the tidy-output conventions, and the
+[introduction vignette](introduction.html) covers `glance()` and `augment()`.
+
+For a standard `posterior` object, call `as_draws_array()`. It preserves
+iterations and chains and can be passed directly to `summarize_draws()`:
+
+```{r}
+#| label: posterior-summaries
+selected_draws <- as_draws_array(full_fit, variable = diagnostic_variables)
+summarize_draws(selected_draws, default_convergence_measures())
+```
+
+See the `posterior` documentation for
+[customizing summaries](https://mc-stan.org/posterior/reference/draws_summary.html)
+and [available diagnostics](https://mc-stan.org/posterior/reference/diagnostics.html).
+
+### Plot the sampling chains
+
+The same draw object works with `bayesplot::mcmc_trace()`.
+
+```{r}
+#| label: trace-full
+#| fig-alt: "Sampling traces for the observation scale and cell offsets, colored by chain"
+mcmc_trace(selected_draws)
+```
+
+Each color represents a chain. Look for
+
+- overlapping traces moving around a stable range
+- persistent separation
+- drift, or
+- long flat stretches
+
+These plots cover only the selected parameters and exclude warmup.
+They do not override problems reported elsewhere in the fit's overview.
+
+## Check predictions with bayesplot
+
+`bayesplot::pp_check()` accepts a fitted `batchieR` model directly.
+It generates replicated responses from that model and compares them with observations.
+The `type` argument selects the plot; there is no need to extract predictions
+manually for these checks.
+
+### Start with a pooled view
+
+An empirical cumulative distribution function (ECDF) shows the fraction of
+responses at or below each value. The dark curve represents observations;
+the lighter curves represent replicated datasets.
+
+```{r}
+#| label: pooled-ecdf-full
+#| fig-alt: "Observed and replicated response ECDFs for the full model"
+pp_check(full_fit, type = "ecdf_overlay")
+```
+
+```{r}
+#| label: pooled-ecdf-additive
+#| fig-alt: "Observed and replicated response ECDFs for the additive model"
+pp_check(additive_fit, type = "ecdf_overlay")
+```
+
+Look for the observed curve to sit among the replicated curves. Consistent
+separation indicates a mismatch in location, spread, or tails. Much of the
+pooled distribution looks similar here, so these plots alone do not clearly
+show which combinations the additive model misses.
+
+### Inspect a combination more closely
+
+Use `newdata` to select observations and `group` to split a plot by a data
+column. We focus on `X:Z` in cell `C`, where this example has a clear discrepancy,
+and keep all three replicates at each dose combination.
+
+```{r}
+#| label: select-combination
+combination_data <- subset(screen, cell == "C" & drug_1 == "X" & drug_2 == "Z")
+```
+
+In the interval plots, `y` marks observed responses and `yrep` marks predictive
+medians. Thick and thin intervals contain 50% and 95% of the replicated
+responses, respectively, including measurement noise. Panels distinguish Z's
+two doses; within each panel, X's dose is on the horizontal axis. Replicates
+share the same dose, so their predictive intervals overlap.
+
+```{r}
+#| label: combination-intervals-additive
+#| fig-alt: "Additive predictive intervals miss the three low responses at X dose 1 and Z dose 2 in cell C"
+pp_check(
+    additive_fit, type = "intervals", newdata = combination_data,
+    x = "dose_1", group = "dose_2", prob = 0.5, prob_outer = 0.95
+) +
+    labs(title = "Additive model: X:Z in cell C", x = "X dose", y = "Response") +
+    scale_x_continuous(breaks = doses) +
+    coord_cartesian(ylim = c(-9, 5))
+```
+
+```{r}
+#| label: combination-intervals-full
+#| fig-alt: "Full-model predictive intervals cover the low responses at X dose 1 and Z dose 2 in cell C"
+pp_check(
+    full_fit, type = "intervals", newdata = combination_data,
+    x = "dose_1", group = "dose_2", prob = 0.5, prob_outer = 0.95
+) +
+    labs(title = "Full model: X:Z in cell C", x = "X dose", y = "Response") +
+    scale_x_continuous(breaks = doses) +
+    coord_cartesian(ylim = c(-9, 5))
+```
+
+At X dose 1 and Z dose 2, all three observations fall below the additive
+model's 95% predictive intervals. The full model reproduces those low responses
+while also capturing the higher responses at X dose 2. This is the missing
+interaction in practical terms: X's dose effect depends on its partner's dose.
+The wider additive intervals do not resolve the mismatch.
+
+See the [bayesplot predictive-check tutorial](https://mc-stan.org/bayesplot/articles/graphical-ppcs.html)
+for more plot types and examples of interpreting them.
+
+## Compare predictive performance with loo
+
+`loo::loo()` also accepts a fit directly. It estimates how well a model
+predicts each observation when that observation is left out, using
+Pareto-smoothed importance sampling (PSIS) to approximate refitting.
+
+```{r}
+#| label: compute-loo
+full_loo <- loo(full_fit)
+full_loo
+additive_loo <- loo(additive_fit)
+additive_loo
+```
+
+The main score is `elpd_loo`, the estimated expected log predictive density;
+higher values indicate better predictive performance on the same observations.
+`looic` expresses that score as a deviance, so lower values are better.
+`p_loo` summarizes effective model complexity. Check the reported standard
+errors and Pareto-k diagnostics before interpreting differences.
+
+### Inspect the approximation diagnostics
+
+In these plots, each point is an observation. High Pareto-k values flag rows
+for which the approximate leave-one-out calculation may be unreliable.
+
+```{r}
+#| label: pareto-k-full
+#| fig-alt: "Pareto-k diagnostics by observation for the full model"
+plot(full_loo, label_points = TRUE)
+```
+
+```{r}
+#| label: pareto-k-additive
+#| fig-alt: "Pareto-k diagnostics by observation for the additive model"
+plot(additive_loo, label_points = TRUE)
+```
+
+Inspect observations above the plotted thresholds and read the printed
+diagnostic categories; exact leave-one-out refits may be needed for flagged rows.
+A high Pareto-k value is a warning about the approximation, not by itself
+evidence that one model is better. The
+[loo diagnostic reference](https://mc-stan.org/loo/reference/pareto-k-diagnostic.html)
+explains thresholds and possible remedies.
+
+### Read the comparison table
+
+```{r}
+#| label: compare-loo
+loo_compare(list(full = full_loo, additive = additive_loo))
+```
+
+The model with the highest estimated ELPD appears first and has `elpd_diff = 0`.
+Other rows show their score minus that model's score: a negative `elpd_diff`
+means worse estimated performance. `se_diff` is the standard error of that **difference**;
+a difference small relative to its standard error gives little reason to prefer one model.
+
+The full model ranks first here, consistent with the predictive plots. However,
+the sampling diagnostics make this ranking provisional. Resolve sampling
+problems and any Pareto-k warnings before relying on the comparison.  Also, each
+held-out unit is one measurement: the other replicates remain in training. This
+does not measure prediction for entirely new cells or drug pairs.  See the
+[loo walkthrough](https://mc-stan.org/loo/articles/loo2-example.html) and
+[`loo_compare()` reference](https://mc-stan.org/loo/reference/loo_compare.html)
+for more detail.
+
+In this example, the standard interfaces reveal a combination the additive
+model misses and a provisional predictive advantage for the full model. They
+also expose sampling issues that need attention before a firm comparison. The
+same calls can be used with your own `batchieR` fits.

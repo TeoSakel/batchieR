@@ -2,4 +2,5 @@
 
 library(devtools)
 library(lintr)
+library(quarto)
 library(roxygen2)

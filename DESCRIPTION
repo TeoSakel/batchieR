@@ -35,10 +35,12 @@ Suggests:
     ggplot2,
     knitr,
     loo (>= 2.0.0),
+    quarto (>= 1.5.0),
     remotes,
     rmarkdown,
     testthat (>= 3.0.0)
-VignetteBuilder: knitr
+VignetteBuilder: knitr, quarto
+SystemRequirements: Quarto command-line tools (https://quarto.org)
 Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)
 Config/roxygen2/version: 8.1.0

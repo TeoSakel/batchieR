@@ -11,3 +11,7 @@
 ^experiments$
 ^doc$
 ^Meta$
+^data-raw$
+^vignettes/.*_files$
+^vignettes/.*\.html$
+^vignettes/\.quarto$

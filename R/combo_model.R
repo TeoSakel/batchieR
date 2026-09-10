@@ -490,6 +490,12 @@ gaussian_response <- function(
 #' for each present drug and added. Use [stats::model.matrix()] on a
 #' `combo_model` to inspect the exact coefficient names and raw-scale design.
 #'
+#' If the cell or compound terms, together with the formula intercept when
+#' present, span every corresponding modeled entity while its offset component
+#' remains active, [fit_combo()] warns that the fixed and residual effects will
+#' be separated primarily by their priors. This check applies when there are
+#' terms from that source and uses the rank of its entity-level design matrix.
+#'
 #' @param value A finite numeric scalar.
 #' @param formula A one- or two-sided formula. Any left-hand side is ignored as
 #'   an outcome but excluded from `.` expansion.

@@ -1,0 +1,1130 @@
+---
+title: "Biologically Informed Model Specification"
+author: "Teo Sakel"
+date: "2026-08-31"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    html-math-method: mathjax
+    theme: none
+    minimal: true
+    embed-resources: true
+    df-print: kable
+    # The minimal quarto::html vignette engine omits Quarto's layout CSS.
+    include-in-header:
+      text: |
+        <style>
+        .quarto-layout-row { display: flex; gap: 1rem; }
+        .quarto-layout-cell { min-width: 0; }
+        .quarto-layout-cell figure { margin: 0; }
+        .quarto-layout-cell img { max-width: 100%; box-sizing: border-box; margin: 0; }
+        </style>
+vignette: >
+  %\VignetteIndexEntry{Biologically Informed Model Specification}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+knitr::opts_chunk$set(
+    collapse = TRUE,
+    comment = "#>",
+    fig.width = 7,
+    fig.height = 4.5
+)
+```
+
+```{r}
+#| label: libraries
+#| message: false
+
+library(batchieR)
+library(Matrix)
+library(ggplot2)
+
+set.seed(20260827)
+```
+
+## Model and biological information
+
+`batchieR` fits Bayesian latent-factor models to combination screens. This
+vignette develops six model specifications that use different parts of the same
+biological information, then compares their predictions and candidate-plate
+scores. For the basic fitting workflow, see
+`vignette("introduction", package = "batchieR")`.
+
+For cell $k$ and compound-dose treatments $i$ and $j$, the Gaussian observation
+model is
+
+$$
+y_{kij} \mid \eta_{kij}, \tau \sim \mathcal{N}(\eta_{kij}, \tau^{-1}),
+$$
+
+with observation precision $\tau$ and linear predictor
+
+$$
+\eta_{kij} = \alpha + x_{kij}^{\mathsf T}\beta
+    + W^{(0)}_k + V^{(0)}_i + V^{(0)}_j
+    + \left(W^{(1)}_k\right)^\top\left(V^{(1)}_i + V^{(1)}_j + V^{(2)}_i\odot V^{(2)}_j\right).
+$$
+
+The systematic mean $\alpha + x_{kij}^{\mathsf T}\beta$ describes the overall
+response level and measured feature effects. Five zero-centered Gaussian
+components capture residual cell and treatment variation. Superscripts label
+component types, subscripts index entities, and $\odot$ denotes element-wise
+multiplication.
+
+| Model argument | Symbol | Dimension | Role |
+|:--|:--|:--|:--|
+| `mean` | $\alpha + x_{kij}^{\mathsf T}\beta$ | scalar per observation | Overall level and optional metadata regression |
+| `cell_offset` | $W^{(0)}$ | $K$ | Baseline differences among cells |
+| `cell_factors` | $W^{(1)}$ | $K \times d$ | Latent characteristics of cells |
+| `treatment_offset` | $V^{(0)}$ | $T$ | Treatment effects shared across cells |
+| `treatment_main_factors` | $V^{(1)}$ | $T \times d$ | Cell-dependent treatment main effects |
+| `treatment_interaction_factors` | $V^{(2)}$ | $T \times d$ | Cell-dependent nonadditive combination effects |
+
+Here $K$ is the number of cells, $T$ is the number of compound-dose treatments,
+and $d$ is the shared latent dimension. Monotherapies omit the second-treatment
+and treatment-interaction terms. Responses in this example are logit-transformed
+viabilities; `plogis()` maps predictions back to the viability scale.
+
+We will start with two independent baselines, add measured features and dose
+pooling, and then use graph and tree relationships to structure the latent
+factors. All six candidates use rank two and a Gaussian response; they differ
+in their mean, dose, and prior specifications.
+
+| Model | Global mean | Dose model | Cell-factor structure | Treatment-factor structure | Treatment shrinkage |
+|:--|:--|:--|:--|:--|:--|
+| `default` | empirical intercept | categorical | IID | IID | horseshoe |
+| `iid` | empirical intercept | categorical | IID | IID | global half-Cauchy |
+| `features` | feature regression | categorical | IID | IID | global half-Cauchy |
+| `nested_dose` | feature regression | nested | IID | IID | global half-Cauchy |
+| `gmrf` | feature regression | nested | GMRF | GMRF | global half-Cauchy |
+| `tree` | feature regression | nested | tree | tree | global half-Cauchy |
+
+## Running example: biological annotations and hierarchies
+
+Consider a combination screen with
+
+- 8 *cell* lines in two *lineages*,
+- 8 *compounds* in 4 *mechanism groups*, and
+- 2 *doses*.
+
+Cells from the same lineage may share biological characteristics, and compounds
+with a common mechanism may affect similar processes. Besides these group
+labels, we include numeric annotations describing individual cells and
+compounds. `pathway_activity` represents a cell's activity in a biological
+pathway, and `target_signature` summarizes a compound's target-related
+characteristics.
+
+Nuisance variables are included to illustrate the effect of irrelevant features
+on model selection.  We also include `growth_rate` for cells and `physchem_pc`,
+a summary of physicochemical properties, for compounds.
+
+```{r}
+#| label: entity-metadata
+
+cells <- sprintf("C%02d", 1:8)
+drugs <- sprintf("D%02d", 1:8)
+
+cell_data <- data.frame(
+    cell = cells,
+    lineage = rep(c("lineage_A", "lineage_B"), each = 4),
+    pathway_activity = c(-1.4, -1.0, -0.6, -0.2, 0.2, 0.6, 1.0, 1.4),
+    growth_rate = c(-0.7, 0.8, -0.2, 0.4, 0.7, -0.8, 0.2, -0.4),
+    stringsAsFactors = FALSE
+)
+compound_data <- data.frame(
+    drug = drugs,
+    mechanism = rep(sprintf("MOA_%d", 1:4), each = 2),
+    target_signature = c(-1.5, -1.2, -0.6, -0.3, 0.3, 0.6, 1.2, 1.5),
+    physchem_pc = c(0.6, -0.7, -0.4, 0.8, -0.8, 0.4, 0.7, -0.6),
+    stringsAsFactors = FALSE
+)
+cell_data
+compound_data
+```
+
+The hierarchy below organizes the biological setting used to generate the
+synthetic screen: cells belong to lineages, compounds belong to mechanism
+groups, and each compound is tested at two doses. The cell lineages and compound
+mechanism groups each sit beneath a shared root.
+
+```{r}
+#| label: fig-example-hierarchies
+#| fig-subcap: ["Cells", "Treatments"]
+#| echo: false
+#| fig-cap: "Generating hierarchy for the synthetic screen. Cells and compounds connect through shared roots; each compound has two nested doses."
+#| layout-ncol: 2
+
+draw_nodes <- function(x, y, labels, fill, cex = 0.75) {
+    y <- rep_len(y, length(x))
+    points(x, y, pch = 21, bg = fill, col = "grey30", cex = 2.5)
+    text(x, y, labels, cex = cex)
+}
+
+plot.new()
+plot.window(xlim = c(0.5, 8.5), ylim = c(0.5, 3.5))
+cell_x <- seq_len(8)
+lineage_x <- c(2.5, 6.5)
+segments(4.5, 3, lineage_x, 2)
+segments(rep(lineage_x, each = 4), 2, cell_x, 1)
+draw_nodes(4.5, 3, "Cell root", "#FADDB7", 0.7)
+draw_nodes(lineage_x, 2, c("Lineage A", "Lineage B"), "#D9EAF7", 0.7)
+draw_nodes(cell_x, 1, cells, "white", 0.7)
+title("Cells", line = 0.5)
+
+plot.new()
+plot.window(xlim = c(0.25, 8.75), ylim = c(0.25, 4.5))
+drug_x <- seq_len(8)
+mechanism_x <- seq(1.5, 7.5, by = 2)
+dose_x <- as.vector(rbind(drug_x - 0.18, drug_x + 0.18))
+segments(4.5, 4, mechanism_x, 3)
+segments(rep(mechanism_x, each = 2), 3, drug_x, 2)
+segments(rep(drug_x, each = 2), 2, dose_x, 1)
+draw_nodes(4.5, 4, "Compound root", "#D9EAF7", 0.65)
+draw_nodes(mechanism_x, 3, sprintf("MOA %d", 1:4), "#FADDB7", 0.65)
+draw_nodes(drug_x, 2, drugs, "white", 0.65)
+draw_nodes(dose_x, 1, rep(c("1", "2"), 8), "#E2F0D9", 0.55)
+text(8.65, 1, "Dose", adj = 1, cex = 0.65)
+title("Treatments", line = 0.5)
+```
+
+
+## Model Specification
+
+### Latent dimension
+
+The cell and treatment factors occupy a shared latent space. The `rank`
+argument sets the number of coordinates in that space, and therefore the
+number of columns in each factor matrix. We use `rank = 2` to keep the worked
+example small and give all six candidates the same latent dimensionality.
+
+### Gaussian components
+
+Each latent component is conditionally Gaussian and can be written schematically as
+
+$$
+u \mid \rho,Q \sim \mathcal N(0, (\rho Q)^{-1}).
+$$
+
+`combo_gaussian_component()` separates the prior into
+
+- `shrinkage`: which controls the magnitude of component values through $\rho$
+- `structure`: which describes relationships among entities through $Q$.
+
+Larger precision means smaller prior variation and stronger shrinkage toward zero.
+
+Magnitude can be controlled globally or locally. A global scale is shared
+across entities, with a separate scale for each latent dimension in factor
+matrices. Local scales let individual entries vary in magnitude, allowing
+some to remain close to zero while others take larger values. Global and local
+scales can also be combined.
+
+### `default` and `iid`: independent baselines
+
+The `default` model specification is based on the original BATCHIE prior.
+The cell offsets ($W^{(0)}$) use a simple `gamma_precision()` shrinkage.
+The cell factors $W^{(1)}$ use multiplicative-gamma shrinkage, with a precision
+for latent dimension $h$ given by
+
+$$
+\rho_h = \prod_{\ell=1}^h \delta_\ell, \qquad \delta_\ell \sim \operatorname{Gamma}(a,b).
+$$
+
+Later dimensions inherit all earlier precision increments. With the default
+hyperparameters, this encourages stronger shrinkage in later dimensions,
+although individual increments can be below one and precision need not increase
+monotonically in every draw. This promotes a lower effective rank when the
+response surface needs fewer dimensions than the chosen `rank`. Because
+treatment main effects and interactions are multiplied by the corresponding cell
+factors, shrinking a cell-factor dimension suppresses its contribution to both terms.
+The matrices retain all their columns; shrinkage changes their effective
+contribution rather than their dimensions.
+
+The remaining three components (the treatment offsets, treatment main factors,
+and treatment interaction factors) use horseshoe shrinkage by default, combining
+global and local scales without progressively penalizing later dimensions. The
+horseshoe's local scales allow some treatment components to remain large while
+others are strongly shrunk.
+
+All five components use `structure = iid()` ($Q=I$), so cells or treatments are
+conditionally independent within each component. Lineage and mechanism annotations
+do not enter these priors. We construct this default baseline with:
+
+```{r}
+#| label: default-model
+
+default_model <- combo_model(rank = 2)
+```
+
+The horseshoe's local scales do not generalize trivially to dependent
+structures, for which `batchieR` does not support horseshoe shrinkage. This
+restriction concerns dependence among latent component values; a
+feature-informed response mean can still be combined with independent
+horseshoe components.
+
+We therefore define a simpler `iid` model that keeps the independent structure
+and both cell-component priors, but uses global half-Cauchy shrinkage for all
+treatment components. This lets subsequent candidates change their structure
+while retaining the same shrinkage family.
+
+```{r}
+#| label: compatible-iid-model
+
+iid_model <- combo_model(
+    rank = 2,
+    cell_offset = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = gamma_precision()
+    ),
+    cell_factors = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = multiplicative_gamma()
+    ),
+    treatment_offset = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    treatment_main_factors = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    treatment_interaction_factors = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    dose = categorical()
+)
+```
+
+### `features`: the systematic mean
+
+Biological annotations provide information about baseline response differences
+among cells and compounds. Pathway activity may help explain why some cells are
+generally more sensitive, while target-related features may explain systematic
+differences among compounds. Besides cell and compound annotations, experiment-level
+covariates, such as assay batch or incubation time, can be used to account
+for differences in experimental conditions. We collect all selected covariates
+in a design matrix $X$, with one row per observation. Writing the row for an
+observation as $x_{kij}^{\mathsf T}$, the predictor becomes
+
+$$
+\eta_{kij}
+  = \alpha + x_{kij}^{\mathsf T}\beta
+    + W^{(0)}_k + V^{(0)}_i + V^{(0)}_j + \text{factor terms}.
+$$
+
+This decomposition is analogous to a mixed-effects model. The intercept
+$\alpha$ and covariate coefficients $\beta$ form the *fixed-effects* part: their
+effects are shared across observations, with coefficients estimated from the
+data. The cell and treatment offsets act like *random intercepts*, capturing
+residual differences that the covariates do not explain. The latent-factor
+terms describe cell-dependent treatment effects and interactions.
+
+We regularize the feature coefficients using Gaussian priors, giving a Bayesian
+analogue of ridge regression. With a zero prior mean and a common precision $\lambda > 0$,
+
+$$
+\beta \sim \mathcal N(0, \lambda^{-1}I).
+$$
+
+Larger $\lambda$ shrinks coefficients more strongly toward zero. This allows us
+to include potentially informative annotations alongside nuisance features
+without treating every apparent association as a large effect. The intercept
+$\alpha$ is estimated under a flat prior and is not subject to this penalty.
+
+The `mean` argument of `combo_model()` specifies the systematic part
+$\alpha + x_{kij}^{\mathsf T}\beta$. Starting from the `iid` model, we replace
+the default empirical mean with `formula_mean()`, which constructs the
+regression from an R formula. Here `beta_precision = 1` sets the common ridge
+precision $\lambda$ to one for all non-intercept coefficients, whose priors
+are centered at zero by default.
+
+The formula can use experiment-level covariates from the observation table,
+cell annotations from `cell_data`, and compound annotations from `compound_data`.
+Covariates are not automatically centered or scaled, so their units affect the
+meaning of the coefficient priors. Scaling continuous covariates to unit
+variance can make a common precision more meaningful.  See `?formula_mean` for
+the supported prior specifications and formula rules.
+
+```{r}
+#| label: feature-model
+
+feature_mean <- formula_mean(
+    ~ pathway_activity + growth_rate + target_signature + physchem_pc,
+    beta_precision = 1
+)
+feature_model <- combo_model(
+    rank = 2,
+    mean = feature_mean,
+    cell_offset = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = gamma_precision()
+    ),
+    cell_factors = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = multiplicative_gamma()
+    ),
+    treatment_offset = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    treatment_main_factors = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    treatment_interaction_factors = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    dose = categorical()
+)
+```
+
+Cell features contribute once per observation; compound features contribute
+once per present compound, so combinations receive the sum of both compounds'
+contributions. The offsets remain as residual cell and treatment effects.
+When covariates can explain the same differences as the offsets, their
+separation depends more strongly on the priors.
+
+The feature coefficients describe effects of the measured annotations on the
+response mean. The latent coordinates in $W^{(1)}$, $V^{(1)}$, and $V^{(2)}$
+still have sign and permutation symmetries, so they do not acquire individual
+biological interpretations. Their zero-centered priors describe residual
+variation around the feature-informed mean.
+
+### `nested_dose`: sharing across doses
+
+The `features` model still treats doses as unrelated categories. With
+`nested(precision = 4)`, a treatment value at dose $r$ is modeled around a
+shared compound parent:
+
+$$
+V_{ir} = \bar V_i + e_{ir}, \qquad e_{ir} \mid \rho \sim \mathcal N(0, (4\rho)^{-1} I)
+$$
+
+The same construction applies to $V^{(0)}$, $V^{(1)}$, and $V^{(2)}$. It reduces
+uncertainty for a sparse or missing dose by borrowing from other doses of that
+compound. The value `4` is relative to the component precision $\rho$ and
+controls the strength of dose-to-parent pooling. It does not use numerical dose
+distance, impose monotonicity, or fit a dose-response curve.
+
+```{r}
+#| label: nested-dose-model
+
+nested_dose_model <- combo_model(
+    rank = 2,
+    mean = feature_mean,
+    cell_offset = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = gamma_precision()
+    ),
+    cell_factors = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = multiplicative_gamma()
+    ),
+    treatment_offset = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    treatment_main_factors = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    treatment_interaction_factors = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    dose = nested(precision = 4)
+)
+```
+
+### `gmrf`: dependence among entities
+
+The preceding models keep cell and compound residuals independent. We now start
+from the `nested_dose` model and ask whether related entities should have
+similar latent factors. A Gaussian Markov random field (GMRF) expresses these
+relationships through a sparse precision matrix $Q$. For latent dimension $h$,
+
+$$
+u_{\cdot h} \mid \rho_h,Q \sim \mathcal N\left(0,(\rho_h Q)^{-1}\right).
+$$
+
+Here `structure` supplies $Q$ and `shrinkage` supplies $\rho_h$. We can describe
+the dependence encoded by $Q$ as a graph: each node represents an entity, such
+as a cell or compound, and an edge joins two entities whose latent factors are
+conditionally dependent given the others. A zero off-diagonal entry $Q_{ij}$
+means that no edge connects entities $i$ and $j$.
+
+To construct $Q$ from biological information, we first choose which entities
+to connect and assign non-negative edge weights describing how strongly their
+latent factors should be encouraged to agree. In this example, we connect cells
+within each lineage and compounds within each mechanism group. The same
+approach can represent pathway or molecular-network relationships.
+
+`batchieR` does not infer these connections from annotations: we specify the
+graph and turn it into a matrix operator for `gmrf()`, which adds a diagonal
+ridge to obtain $Q$. Here we use the combinatorial graph Laplacian
+
+$$
+L = D - A
+$$
+
+where the adjacency matrix $A$ stores the edge weights: $A_{ij}$ is the weight
+between entities $i$ and $j$, or zero if they are not connected. The graph is
+undirected, so $A$ is symmetric, and $D$ is a diagonal matrix containing $A$'s
+row sums. For a vector $x$ of latent-factor values across entities, this gives
+the penalty
+
+$$
+x^\top Lx = \frac{1}{2}\sum_{i,j}A_{ij}(x_i-x_j)^2
+$$
+
+Larger edge weights more strongly encourage neighbors to agree. The helper
+below connects cells within lineages and compounds within mechanism groups.
+
+```{r}
+#| label: gmrf-structures
+
+graph_laplacian <- function(nodes, edges) {
+    adjacency <- sparseMatrix(
+        i = match(edges[, 1], nodes),
+        j = match(edges[, 2], nodes),
+        x = 1,
+        dims = rep(length(nodes), 2),
+        dimnames = list(nodes, nodes)
+    )
+    adjacency <- adjacency + t(adjacency)
+    operator <- Diagonal(
+        length(nodes),
+        x = rowSums(adjacency)
+    ) - adjacency
+    dimnames(operator) <- list(nodes, nodes)
+    drop0(operator)
+}
+
+cell_edges <- cells |>
+    split(cell_data$lineage) |>
+    lapply(function(group) t(combn(group, 2))) |>
+    do.call(what = rbind, args = _)
+
+compound_edges <- drugs |>
+    split(compound_data$mechanism) |>
+    lapply(function(group) t(combn(group, 2))) |>
+    do.call(what = rbind, args = _)
+
+cell_gmrf <- gmrf(8 * graph_laplacian(cells, cell_edges), ridge = 0.5)
+compound_gmrf <- gmrf(8 * graph_laplacian(drugs, compound_edges), ridge = 0.5)
+```
+
+The GMRF is an alternative to the generating hierarchy. It connects cells
+directly within each lineage, without introducing lineage parents or a shared
+root. The compound graph uses the same construction within each mechanism group.
+
+```{r}
+#| label: fig-gmrf-connectivity
+#| echo: false
+#| fig-format: "svg"
+#| fig-width: 6
+#| fig-height: 2.5
+#| fig-cap: "Alternative GMRF specification for cell factors. Each lineage forms a fully connected group, with no connections between lineages."
+
+gmrf_nodes <- data.frame(
+    cell = cells,
+    x = c(0.7, 1.7, 0.7, 1.7, 3.7, 4.7, 3.7, 4.7),
+    y = rep(c(1.8, 1.8, 0.6, 0.6), 2)
+)
+# Draw exactly the edges used to construct cell_gmrf above.
+from <- match(cell_edges[, 1], gmrf_nodes$cell)
+to <- match(cell_edges[, 2], gmrf_nodes$cell)
+gmrf_plot_edges <- data.frame(
+    x = gmrf_nodes$x[from], y = gmrf_nodes$y[from],
+    xend = gmrf_nodes$x[to], yend = gmrf_nodes$y[to]
+)
+
+ggplot(gmrf_nodes, aes(x = x, y = y)) +
+    geom_segment(
+        data = gmrf_plot_edges, aes(xend = xend, yend = yend),
+        colour = "grey55", linewidth = 0.6
+    ) +
+    geom_point(
+        shape = 21, fill = "#E2F0D9", colour = "grey30", size = 10, stroke = 0.4
+    ) +
+    geom_text(aes(label = cell), size = 3.5) +
+    coord_fixed(xlim = c(0.25, 5.15), ylim = c(0.2, 2.2), expand = FALSE) +
+    theme_void() +
+    theme(plot.margin = margin(4, 4, 4, 4))
+```
+
+```{r}
+#| label: gmrf-model
+
+gmrf_model <- combo_model(
+    rank = 2,
+    mean = feature_mean,
+    cell_offset = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = gamma_precision()
+    ),
+    cell_factors = combo_gaussian_component(
+        structure = cell_gmrf,
+        shrinkage = multiplicative_gamma()
+    ),
+    treatment_offset = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    treatment_main_factors = combo_gaussian_component(
+        structure = compound_gmrf,
+        shrinkage = global_half_cauchy()
+    ),
+    treatment_interaction_factors = combo_gaussian_component(
+        structure = compound_gmrf,
+        shrinkage = global_half_cauchy()
+    ),
+    dose = nested(precision = 4)
+)
+```
+
+Other operators, such as a symmetric normalized Laplacian, can encode different
+prior assumptions about the same graph. The operator must be symmetric, and
+$Q = \text{operator} + \text{ridge} I$ must be positive definite to define a
+proper Gaussian prior. A positive ridge guarantees this when the operator is
+positive semidefinite, as a graph Laplacian is. Here, $Q=8L+0.5I$: the multiplier
+controls the edge penalty relative to the ridge, while component `shrinkage`
+scales $Q$ as a whole.
+
+Alternatively, `precision(Q)` accepts a complete precision matrix directly,
+without adding a ridge; component `shrinkage` still scales the supplied
+precision. See `?gmrf` and `?precision` for input requirements.
+
+### `tree`: hierarchical relationships
+
+We now return to the generating hierarchy introduced in the running example.  A
+tree is a special graph structure: each non-root node has a single parent, and
+each child is a Gaussian increment from that parent. Related leaves share
+ancestral increments.  This gives a structured Gaussian prior on all nodes,
+including internal latent parents; the leaf covariance reflects their shared
+ancestry.
+
+The `tree` candidate uses this hierarchy in place of the direct connections in
+`gmrf`. Cell lineages structure $W^{(1)}$, and compound mechanisms structure
+$V^{(1)}$ and $V^{(2)}$. Both candidates extend `nested_dose`, keeping its mean,
+residual offsets, shrinkage families, and dose pooling.
+
+`tree()` constructs the relative precision from a data frame containing `node`
+and `parent` columns and, optionally, a positive `edge_length`. Each child is a
+Gaussian increment from its parent. Edge precision is the inverse of edge length,
+so shorter edges express stronger similarity, and leaves covary through their
+shared ancestral path. Internal parents become latent Gaussian nodes. A valid tree requires:
+
+- every modeled cell or compound must be a terminal node
+- all nonmissing parents exist
+- no cycles
+
+Here, cells share lineage parents and compounds share mechanism parents:
+
+```{r}
+#| label: tree-structures
+
+cell_tree <- data.frame(
+    node = c(".cell_root", "lineage_A", "lineage_B", cells),
+    parent = c(NA, ".cell_root", ".cell_root", rep("lineage_A", 4), rep("lineage_B", 4)),
+    edge_length = c(1, 1, 1, rep(0.05, 8)),
+    stringsAsFactors = FALSE
+)
+cell_tree <- tree(node, parent, cell_tree, edge_length = edge_length)
+
+compound_tree <- data.frame(
+    node = c(".drug_root", sprintf("MOA_%d", 1:4), drugs),
+    parent = c(NA, rep(".drug_root", 4), rep(sprintf("MOA_%d", 1:4), each = 2)),
+    edge_length = c(1, rep(1, 4), rep(0.05, 8)),
+    stringsAsFactors = FALSE
+)
+compound_tree <- tree(node, parent, compound_tree, edge_length = edge_length)
+```
+
+The tree model assigns these structures to the three factor components.
+
+```{r}
+#| label: tree-model
+
+tree_model <- combo_model(
+    rank = 2,
+    mean = feature_mean,
+    cell_offset = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = gamma_precision()
+    ),
+    cell_factors = combo_gaussian_component(
+        structure = cell_tree,
+        shrinkage = multiplicative_gamma()
+    ),
+    treatment_offset = combo_gaussian_component(
+        structure = iid(),
+        shrinkage = global_half_cauchy()
+    ),
+    treatment_main_factors = combo_gaussian_component(
+        structure = compound_tree,
+        shrinkage = global_half_cauchy()
+    ),
+    treatment_interaction_factors = combo_gaussian_component(
+        structure = compound_tree,
+        shrinkage = global_half_cauchy()
+    ),
+    dose = nested(precision = 4)
+)
+```
+
+## Reproducible toy responses
+
+We now introduce responses for the annotated screen using the `tree_model` as a generating model.
+Its hyperparameters are set as following:
+
+- feature-coefficient priors have means `0.42` for `pathway_activity`, `-0.28` for `target_signature`, and precision `1000`.
+- Prior prediction fixes the intercept at `1.15`;
+- observation precision has a gamma prior with shape `100` and rate `1.44`.
+
+These are simulation assumptions, distinct from the priors used to fit the six candidates.
+
+The design includes single-agent experiments at both doses and all four dose
+combinations for each selected compound pair. Every configuration has three
+replicate measurements, sharing the same latent mean but with independent
+observation noise. The complete generation recipe is shown below:
+
+<details>
+<summary>Show the data-generation recipe</summary>
+
+```{r}
+#| label: synthetic-data-generation
+#| eval: false
+
+modeled_pairs <- c(
+    # within pairs
+    "D01:D02", "D03:D04",
+    "D05:D06", "D07:D08",
+    # cross pairs
+    "D02:D03", "D04:D05",
+    "D06:D07", "D01:D08",
+    "D01:D03", "D03:D05",
+    "D05:D07", "D01:D07"
+)
+
+screen <- expand.grid(
+    cell = cells,
+    drug_1 = drugs,
+    dose_1 = 1:2,
+    drug_2 = c(NA_character_, drugs),
+    dose_2 = c(NA_real_, 1:2),
+    replicate = 1:3,
+    stringsAsFactors = FALSE
+)
+is_single_drug <- with(screen, is.na(drug_2) & is.na(dose_2))
+is_modeled_pair <- with(
+    screen,
+    !is.na(dose_2) & paste(drug_1, drug_2, sep = ":") %in% modeled_pairs
+)
+screen <- screen[is_single_drug | is_modeled_pair, , drop = FALSE]
+rownames(screen) <- NULL
+screen$configuration <- rep(seq_len(sum(screen$replicate == 1)), times = 3)
+
+# Use the tree model with the generating mean and observation precision.
+synthetic_model <- tree_model
+synthetic_model$mean <- formula_mean(
+    ~ pathway_activity + growth_rate + target_signature + physchem_pc,
+    beta_mean = c(
+        pathway_activity = 0.42,
+        growth_rate = 0,
+        target_signature = -0.28,
+        physchem_pc = 0
+    ),
+    beta_precision = 1000
+)
+synthetic_model$family <- gaussian_response(
+    precision = gamma_precision(shape = 100, rate = 1.44)
+)
+
+screen$modeled_response <- as.numeric(
+    prior_predict(
+        synthetic_model,
+        screen,
+        cell_data = cell_data,
+        compound_data = compound_data,
+        draws = 1,
+        type = "response",
+        seed = 20260828,
+        intercept = 1.15
+    )
+)
+screen$viability <- plogis(screen$modeled_response)
+```
+
+</details>
+
+For reproducibility, every fit and score below uses a pre-generated screen that
+ships with the package.
+
+```{r}
+#| label: load-pregenerated-screen
+
+screen <- read.csv(
+    system.file("extdata", "biologically_informed_models.csv",
+                package = "batchieR", mustWork = TRUE),
+    stringsAsFactors = FALSE
+)
+```
+
+### Evaluation plates
+
+We now define six plates and hide their responses. Later we use these same
+plates in two ways:
+
+1. to measure prediction error, and
+2. as candidates for future experimental design
+
+| Plate | Four unique configurations | Main question |
+|:--|:--|:--|
+| `interpolation` | familiar cells, compounds, and doses | Can the model fill an ordinary gap? |
+| `dose_transfer` | a held-out dose of `D05+D06` | Does pooling across doses help? |
+| `unobserved_cell` | two combinations in `C04` and `C08` | Can annotations and lineage transfer to cells with no responses? |
+| `unobserved_compound` | `D07+D08` in four observed cells | Can annotations and mechanism transfer to a compound with no responses? |
+| `related_combination` | `D01+D03` in four cells | Can information transfer from related compounds and combinations? |
+| `cross_mechanism_discovery` | `D03+D05` in four cells | How does the model treat a new cross-mechanism combination? |
+
+Each plate contains four unique configurations and two wells per configuration.
+Training configurations have three observed replicate measurements. All three
+measurements of each held-out configuration are masked during fitting;
+prediction error uses its first replicate, once per unique configuration.
+Candidate plates have two proposed wells per configuration, and PDBAL uses all
+eight wells because replication changes the information supplied by the plate.
+
+We add the new *unobserved* plates to the training data without response so that
+the model is aware of the entities involved.
+
+<details>
+<summary>Show the plate definitions and response masking</summary>
+
+```{r}
+#| label: response-mask
+# Helpers for identifying compounds and unordered compound pairs.
+
+is_combination <- !is.na(screen$drug_2)
+contains_drug <- function(data, selected) {
+    data$drug_1 %in% selected |
+        (!is.na(data$drug_2) & data$drug_2 %in% selected)
+}
+pair_key <- function(drug_1, drug_2) {
+    ifelse(
+        is.na(drug_2),
+        drug_1,
+        paste(pmin(drug_1, drug_2), pmax(drug_1, drug_2), sep = ":")
+    )
+}
+
+# Match a proposed experiment to the first replicate of its configuration.
+row_matches <- function(cell, drug_1, dose_1, drug_2 = NA_character_, dose_2 = NA_real_) {
+    screen$cell == cell & screen$drug_1 == drug_1 & screen$dose_1 == dose_1 &
+        if (is.na(drug_2)) {
+            is.na(screen$drug_2)
+        } else {
+            screen$drug_2 == drug_2 & screen$dose_2 == dose_2
+        }
+}
+candidate_indices <- function(configurations) {
+    indices <- integer(nrow(configurations))
+    for (index in seq_len(nrow(configurations))) {
+        matched <- which(screen$replicate == 1 & row_matches(
+            configurations$cell[index],
+            configurations$drug_1[index],
+            configurations$dose_1[index],
+            configurations$drug_2[index],
+            configurations$dose_2[index]
+        ))
+        stopifnot(length(matched) == 1)
+        indices[index] <- matched
+    }
+    indices
+}
+
+# Build matched-dose combination configurations for candidate plates.
+candidate_config <- function(cells, drug_1, drug_2, dose) {
+    data.frame(
+        cell = cells,
+        drug_1 = drug_1,
+        dose_1 = dose,
+        drug_2 = drug_2,
+        dose_2 = dose,
+        stringsAsFactors = FALSE
+    )
+}
+
+# Define each plate once, before adding replicate wells.
+prediction_data <- list(
+    interpolation = candidate_config(
+        c("C01", "C02", "C05", "C06"),
+        c("D01", "D03", "D05", "D06"),
+        c("D02", "D04", "D06", "D07"),
+        1
+    ),
+    dose_transfer = candidate_config(
+        c("C01", "C02", "C05", "C06"), "D05", "D06", 2
+    ),
+    unobserved_cell = candidate_config(
+        c("C04", "C04", "C08", "C08"),
+        c("D01", "D03", "D01", "D03"),
+        c("D02", "D04", "D02", "D04"),
+        c(1, 2, 1, 2)
+    ),
+    unobserved_compound = candidate_config(
+        c("C01", "C02", "C05", "C06"), "D07", "D08", c(1, 2, 1, 2)
+    ),
+    related_combination = candidate_config(
+        c("C01", "C02", "C05", "C06"), "D01", "D03", c(1, 2, 1, 2)
+    ),
+    cross_mechanism_discovery = candidate_config(
+        c("C01", "C02", "C05", "C06"), "D03", "D05", 1
+    )
+)
+prediction_indices <- lapply(prediction_data, candidate_indices)
+
+# The physical plates contain two wells for each unique configuration.
+candidate_data <- lapply(prediction_data, function(data) {
+    data[rep(seq_len(nrow(data)), each = 2), , drop = FALSE]
+})
+
+# Hide extra rows needed to make the cell, compound, dose, and combinations
+# genuinely unobserved. The named plate rows are the rows evaluated below.
+held_out_cell <- screen$cell %in% c("C04", "C08")
+held_out_compound <- contains_drug(screen, "D08")
+held_out_dose <-
+    (screen$drug_1 %in% c("D05", "D06") & screen$dose_1 == 2) |
+    (screen$drug_2 %in% c("D05", "D06") & !is.na(screen$dose_2) & screen$dose_2 == 2)
+held_out_pair <- is_combination & pair_key(screen$drug_1, screen$drug_2) %in%
+    c("D01:D03", "D03:D05")
+
+screen$role <- "training"
+screen$role[held_out_cell | held_out_compound | held_out_dose | held_out_pair] <-
+    "supporting_holdout"
+for (plate in names(prediction_indices)) {
+    configurations <- screen$configuration[prediction_indices[[plate]]]
+    screen$role[screen$configuration %in% configurations] <- plate
+}
+screen$response <- ifelse(
+    screen$role == "training",
+    screen$modeled_response,
+    NA_real_
+)
+
+# Retain only the columns required by prediction and plate scoring.
+prediction_columns <- c("cell", "drug_1", "dose_1", "drug_2", "dose_2")
+prediction_data <- lapply(prediction_data, function(data) data[prediction_columns])
+candidate_data <- lapply(candidate_data, function(data) data[prediction_columns])
+stopifnot(
+    all(vapply(prediction_data, nrow, integer(1)) == 4),
+    all(vapply(candidate_data, nrow, integer(1)) == 8),
+    all(vapply(prediction_indices, length, integer(1)) == 4)
+)
+
+# Inspect two experiments from each role before summarizing the masking design.
+screen |>
+    split(screen$role) |>
+    lapply(head, 2) |>
+    do.call(what = rbind, args = _) |>
+    `rownames<-`(NULL) |>
+    subset(select = c(prediction_columns, "viability", "role"))
+table(screen$role)
+```
+
+</details>
+
+## Fit and evaluate the six models
+
+We fit all six models to the same observed rows. Sampler mechanics are covered
+in the introduction.  For chain diagnostics, posterior predictive checks, and LOO
+comparisons, see `vignette("model_checking", package = "batchieR")`. Here we
+focus on the consequences of the six model specifications.
+
+```{r}
+#| label: fit-models
+
+models <- list(
+    default = default_model,
+    iid = iid_model,
+    features = feature_model,
+    nested_dose = nested_dose_model,
+    gmrf = gmrf_model,
+    tree = tree_model
+)
+set.seed(20260900)
+fits <- models |>
+    lapply(
+        fit_combo,
+        data = screen[c(prediction_columns, "response")],
+        cell_data = cell_data,
+        compound_data = compound_data,
+        chains = 2,
+        parallel_chains = 1,
+        iter_warmup = 500,
+        iter_sampling = 500,
+        thin = 1,
+        refresh = 0
+    )
+```
+
+### Metadata-effect estimates
+
+The metadata formula affects the global response mean, and its coefficients are
+on the raw feature scale. We compare their posterior distributions with the
+prior means used to generate the synthetic responses: `0.42` for `pathway_activity`,
+`-0.28` for `target_signature`, and zero for the two nuisance features. Orange
+crosses mark these generating prior means.
+
+```{r}
+#| label: feature-coefficients
+
+feature_map <- fits$features |>
+    parameter_map() |>
+    subset(component == "mean" & parameter == "coefficient")
+
+feature_map$generating_prior_mean <- c(
+    pathway_activity = 0.42,
+    growth_rate = 0,
+    target_signature = -0.28,
+    physchem_pc = 0
+)[feature_map$feature]
+
+fits$features |>
+    posterior_draws(variable = feature_map$variable) |>
+    bayesplot::mcmc_areas(
+        prob = 0.8,
+        prob_outer = 0.95,
+        point_est = "median"
+    ) +
+    scale_y_discrete(labels = setNames(feature_map$feature, feature_map$variable)) +
+    geom_vline(xintercept = 0, colour = "grey60", linetype = "dashed") +
+    geom_point(
+        data = feature_map,
+        aes(x = generating_prior_mean, y = variable),
+        inherit.aes = FALSE, shape = 4, size = 3, stroke = 1, colour = "#D55E00"
+    ) +
+    labs(x = "Feature coefficient", y = NULL)
+```
+
+Look for posterior estimates near the generating prior means, with the two
+nuisance effects near zero. The interval widths show how precisely each effect
+is estimated. Features can still help prediction even when their individual
+coefficients are uncertain.
+
+### Held-out plate prediction
+
+For each plate, RMSE compares the posterior mean prediction with the held-out
+observed responses on the fitted logit scale (`modeled_response`). These
+responses are hidden during fitting. This evaluates prediction of measured
+outcomes, so the error includes observation noise as well as error in the
+estimated mean. We evaluate the first held-out replicate of each unique
+configuration; all three replicates are excluded from fitting.
+
+```{r}
+#| label: prediction-metrics
+#| fig-alt: "Held-out response RMSE by model and plate"
+
+prediction_metrics <- data.frame(
+    model = rep(names(fits), each = length(prediction_data)),
+    plate = rep(names(prediction_data), times = length(fits)),
+    n_configurations = rep(vapply(prediction_data, nrow, integer(1)), times = length(fits)),
+    response_rmse = NA_real_
+)
+
+for (i in seq_len(nrow(prediction_metrics))) {
+    model <- prediction_metrics$model[i]
+    plate <- prediction_metrics$plate[i]
+    expected <- posterior_epred(fits[[model]], newdata = prediction_data[[plate]])
+    truth <- screen$modeled_response[prediction_indices[[plate]]]
+    prediction_metrics$response_rmse[i] <- sqrt(mean((colMeans(expected) - truth)^2))
+}
+
+prediction_metrics$model <- factor(prediction_metrics$model, levels = rev(names(models)))
+prediction_metrics$plate <- factor(prediction_metrics$plate, levels = names(prediction_data))
+
+ggplot(prediction_metrics, aes(x = response_rmse, y = model, fill = model)) +
+    geom_col(show.legend = FALSE) +
+    scale_fill_brewer(palette = "Set2") +
+    facet_wrap(vars(plate)) +
+    labs(x = "Held-out response RMSE (logit scale)", y = NULL) +
+    theme_bw()
+```
+
+Read each comparison locally. The feature model can help the two unobserved-
+entity plates, nested doses target `dose_transfer`, and the tree and GMRF can
+help when lineage or mechanism relationships are useful. These are results from
+one synthetic draw, so the plot illustrates model behavior rather than ranking
+the priors in general.
+
+## Score candidate plates
+
+To complete the workflow, we score the same six plates with PDBAL. Unlike
+RMSE, the score does not use their hidden outcomes. It asks which complete
+eight-well plate is expected to reduce posterior uncertainty across the
+`r nrow(unique(screen[prediction_columns]))`-configuration reference surface.
+Distances are measured after converting expected logit responses back to viability; the candidate likelihood remains
+Gaussian on the fitted logit scale. Lower scores are preferred.
+
+```{r}
+#| label: score-candidates
+
+score_rows <- vector("list", length(fits))
+for (i in seq_along(fits)) {
+    scores <- score_plate_pdbal(
+        fits[[i]],
+        candidate_data = candidate_data,
+        reference_grid = unique(screen[prediction_columns]),
+        response_transform = plogis,
+        max_triplets = 1000
+    )
+    scores$model <- names(fits)[i]
+    scores$normalized_score <- round(scores$score - min(scores$score), 3)
+    score_rows[[i]] <- scores
+}
+plate_scores <- do.call(rbind, score_rows)
+rownames(plate_scores) <- NULL
+
+plate_ranks <- reshape(
+    plate_scores[c("model", "plate", "normalized_score")],
+    idvar = "plate", timevar = "model", direction = "wide"
+)
+plate_ranks <- plate_ranks[match(names(candidate_data), plate_ranks$plate), , drop = FALSE]
+names(plate_ranks) <- sub("normalized_score[.]", "", names(plate_ranks))
+plate_ranks
+```
+
+The normalized score is zero for the preferred plate within each model. Only
+values within a model should be compared because changing the model also
+changes its posterior distances and predictive distributions.
+
+```{r}
+#| label: selected-plates
+
+subset(plate_scores, rank == 1, select = c(model, plate))
+```
+
+## Conclusion
+
+Fixed choices such as edge lengths, graph weights, dose precision, and the GMRF ridge
+should be checked with prior-predictive simulation and sensitivity analysis.
+They should come from external knowledge or plausible response behavior, rather
+than being tuned to the same hidden outcomes used for evaluation. For a fuller treatment, see
+[Betancourt's principled Bayesian workflow](https://betanalpha.github.io/assets/case_studies/principled_bayesian_workflow.html)
+and [Gabry et al. on visualization in Bayesian workflow](https://academic.oup.com/jrsssa/article/182/2/389/7070184).
+
+## Session information
+
+```{r}
+#| label: session-information
+
+sessionInfo()
+```
