@@ -5,6 +5,8 @@
 dev/
 experiments/merck/work/
 experiments/merck/results/
+experiments/samplers/results/
+experiments/samplers/work/
 /doc/
 /Meta/
 /vignettes/*_files/
