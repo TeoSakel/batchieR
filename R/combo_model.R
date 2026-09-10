@@ -145,6 +145,60 @@ combo_model <- function(
     )
 }
 
+#' Update a combination-model specification
+#'
+#' Creates a new specification by replacing selected arguments of [combo_model()].
+#' Omitted arguments retain their stored values, including disabled components
+#' and formula environments. Each supplied specification replaces its previous
+#' value in full; nested fields are not merged. Set a component to `NULL` to
+#' disable it. The complete result is validated by [combo_model()].
+#'
+#' This method updates specifications only and does not fit a model. Use
+#' [fit_combo()] to fit the returned specification. Formula-update shorthand
+#' and `evaluate = FALSE` are not supported. Calling `update(object)` without
+#' replacements returns an identical specification. The original is unchanged.
+#'
+#' @param object A specification created by [combo_model()].
+#' @param ... Replacements for any [combo_model()] arguments: `rank`, `mean`,
+#'   `cell_offset`, `cell_factors`, `treatment_offset`, `treatment_main_factors`,
+#'   `treatment_interaction_factors`, `dose`, or `family`. Each argument must
+#'   have its full, unique name.
+#' @return A validated `combo_model` specification.
+#' @seealso [combo_model()], [fit_combo()]
+#' @examples
+#' model <- combo_model(rank = 2L)
+#' update(model, rank = 4L)
+#' update(model, treatment_interaction_factors = NULL)
+#' update(model, treatment_offset = combo_gaussian_component(
+#'     shrinkage = gamma_precision(shape = 2, rate = 1)
+#' ))
+#' @exportS3Method stats::update
+update.combo_model <- function(object, ...) {
+    replacements <- list(...)
+    if (length(replacements)) {
+        labels <- names(replacements)
+        if (is.null(labels) || anyNA(labels) || any(!nzchar(labels))) {
+            cli::cli_abort("All update() arguments must be named")
+        }
+        if (anyDuplicated(labels)) {
+            duplicates <- unique(labels[duplicated(labels)])
+            cli::cli_abort("Duplicate update() argument(s): {.and {duplicates}}")
+        }
+        unknown <- setdiff(labels, names(formals(combo_model)))
+        if (length(unknown)) {
+            cli::cli_abort("Unknown update() argument(s): {.and {unknown}}")
+        }
+    }
+    arguments <- c(
+        list(rank = object$rank, mean = object$mean),
+        object$components,
+        list(dose = object$dose, family = object$family)
+    )
+    # Single-bracket assignment preserves explicit NULL component replacements.
+    arguments[names(replacements)] <- replacements
+    do.call(combo_model, arguments)
+}
+
 #' @param x A `combo_model` object.
 #' @param ... Reserved for future methods.
 #' @return `x`, invisibly.

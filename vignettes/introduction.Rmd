@@ -161,6 +161,16 @@ model <- combo_model(rank = 2, mean = fixed_mean(1.5))
 model
 ```
 
+Use `update()` to change selected settings while retaining the rest of a model
+specification. Components are replaced in full, and `NULL` disables a component.
+The original specification is unchanged; fit the result with `fit_combo()` when
+ready.
+
+```{r update-model-specification}
+revised_model <- update(model, rank = 4, treatment_interaction_factors = NULL)
+revised_model
+```
+
 ## Generating synthetic data
 
 We illustrate the workflow with three cells (`A`, `B`, and `C`) and four

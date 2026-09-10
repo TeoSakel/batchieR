@@ -273,19 +273,17 @@ and both cell-component priors, but uses global half-Cauchy shrinkage for all
 treatment components. This lets subsequent candidates change their structure
 while retaining the same shrinkage family.
 
+We use `update()` to derive each new specification from an existing model.
+Only named arguments change; omitted settings are retained and the original
+model is unchanged. Each supplied component replaces its previous specification
+in full, so we specify both its structure and shrinkage. The result is validated
+by `combo_model()` and can be fitted later with `fit_combo()`.
+
 ```{r}
 #| label: compatible-iid-model
 
-iid_model <- combo_model(
-    rank = 2,
-    cell_offset = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = gamma_precision()
-    ),
-    cell_factors = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = multiplicative_gamma()
-    ),
+iid_model <- update(
+    default_model,
     treatment_offset = combo_gaussian_component(
         structure = iid(),
         shrinkage = global_half_cauchy()
@@ -297,8 +295,7 @@ iid_model <- combo_model(
     treatment_interaction_factors = combo_gaussian_component(
         structure = iid(),
         shrinkage = global_half_cauchy()
-    ),
-    dose = categorical()
+    )
 )
 ```
 
@@ -359,31 +356,7 @@ feature_mean <- formula_mean(
     ~ pathway_activity + growth_rate + target_signature + physchem_pc,
     beta_precision = 1
 )
-feature_model <- combo_model(
-    rank = 2,
-    mean = feature_mean,
-    cell_offset = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = gamma_precision()
-    ),
-    cell_factors = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = multiplicative_gamma()
-    ),
-    treatment_offset = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = global_half_cauchy()
-    ),
-    treatment_main_factors = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = global_half_cauchy()
-    ),
-    treatment_interaction_factors = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = global_half_cauchy()
-    ),
-    dose = categorical()
-)
+feature_model <- update(iid_model, mean = feature_mean)
 ```
 
 Cell features contribute once per observation; compound features contribute
@@ -417,31 +390,7 @@ distance, impose monotonicity, or fit a dose-response curve.
 ```{r}
 #| label: nested-dose-model
 
-nested_dose_model <- combo_model(
-    rank = 2,
-    mean = feature_mean,
-    cell_offset = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = gamma_precision()
-    ),
-    cell_factors = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = multiplicative_gamma()
-    ),
-    treatment_offset = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = global_half_cauchy()
-    ),
-    treatment_main_factors = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = global_half_cauchy()
-    ),
-    treatment_interaction_factors = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = global_half_cauchy()
-    ),
-    dose = nested(precision = 4)
-)
+nested_dose_model <- update(feature_model, dose = nested(precision = 4))
 ```
 
 ### `gmrf`: dependence among entities
@@ -564,20 +513,11 @@ ggplot(gmrf_nodes, aes(x = x, y = y)) +
 ```{r}
 #| label: gmrf-model
 
-gmrf_model <- combo_model(
-    rank = 2,
-    mean = feature_mean,
-    cell_offset = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = gamma_precision()
-    ),
+gmrf_model <- update(
+    nested_dose_model,
     cell_factors = combo_gaussian_component(
         structure = cell_gmrf,
         shrinkage = multiplicative_gamma()
-    ),
-    treatment_offset = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = global_half_cauchy()
     ),
     treatment_main_factors = combo_gaussian_component(
         structure = compound_gmrf,
@@ -586,8 +526,7 @@ gmrf_model <- combo_model(
     treatment_interaction_factors = combo_gaussian_component(
         structure = compound_gmrf,
         shrinkage = global_half_cauchy()
-    ),
-    dose = nested(precision = 4)
+    )
 )
 ```
 
@@ -654,20 +593,11 @@ The tree model assigns these structures to the three factor components.
 ```{r}
 #| label: tree-model
 
-tree_model <- combo_model(
-    rank = 2,
-    mean = feature_mean,
-    cell_offset = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = gamma_precision()
-    ),
+tree_model <- update(
+    nested_dose_model,
     cell_factors = combo_gaussian_component(
         structure = cell_tree,
         shrinkage = multiplicative_gamma()
-    ),
-    treatment_offset = combo_gaussian_component(
-        structure = iid(),
-        shrinkage = global_half_cauchy()
     ),
     treatment_main_factors = combo_gaussian_component(
         structure = compound_tree,
@@ -676,8 +606,7 @@ tree_model <- combo_model(
     treatment_interaction_factors = combo_gaussian_component(
         structure = compound_tree,
         shrinkage = global_half_cauchy()
-    ),
-    dose = nested(precision = 4)
+    )
 )
 ```
 
@@ -734,19 +663,21 @@ rownames(screen) <- NULL
 screen$configuration <- rep(seq_len(sum(screen$replicate == 1)), times = 3)
 
 # Use the tree model with the generating mean and observation precision.
-synthetic_model <- tree_model
-synthetic_model$mean <- formula_mean(
-    ~ pathway_activity + growth_rate + target_signature + physchem_pc,
-    beta_mean = c(
-        pathway_activity = 0.42,
-        growth_rate = 0,
-        target_signature = -0.28,
-        physchem_pc = 0
+synthetic_model <- update(
+    tree_model,
+    mean = formula_mean(
+        ~ pathway_activity + growth_rate + target_signature + physchem_pc,
+        beta_mean = c(
+            pathway_activity = 0.42,
+            growth_rate = 0,
+            target_signature = -0.28,
+            physchem_pc = 0
+        ),
+        beta_precision = 1000
     ),
-    beta_precision = 1000
-)
-synthetic_model$family <- gaussian_response(
-    precision = gamma_precision(shape = 100, rate = 1.44)
+    family = gaussian_response(
+        precision = gamma_precision(shape = 100, rate = 1.44)
+    )
 )
 
 screen$modeled_response <- as.numeric(
