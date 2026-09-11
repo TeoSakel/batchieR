@@ -171,19 +171,30 @@ fit_combo <- function(
 #'
 #' `print()` reports sampling dimensions, model rank, modeled entities, maximum R-hat,
 #' minimum bulk and tail effective sample sizes (ESS), and counts of unavailable
-#' diagnostics across public posterior variables.
+#' diagnostics across public posterior variables. Factor terms are represented
+#' by `main_effect[combo_id]` and `interaction_effect[combo_id]`, summed over
+#' latent dimensions within each draw. Replicates and reversed treatment order
+#' share a combo ID; see [combo_map()] and [row_map()].
 #' `summary()` adds a per-variable [posterior::summarize_draws()] table with
-#' means, medians, standard deviations, MADs, 5% and 95% quantiles, R-hat,
-#' bulk ESS, and tail ESS by default. Chain boundaries are preserved.
+#' means and standard deviations (or medians and MADs with `robust = TRUE`),
+#' 5% and 95% quantiles, R-hat, bulk ESS, and tail ESS by default.
+#' Chain boundaries are preserved.
 #'
 #' Diagnostics may be unavailable for short or constant chains. Unavailable
 #' values are retained in the summary and counted separately in `print()`.
-#' Diagnostics for latent factors can also reflect their non-identifiability.
+#' Aggregate diagnostics assess these contributions, not convergence or
+#' identifiability of the latent decomposition. Individual factor coordinates
+#' and their shrinkage precisions are available with `include = "all"` in
+#' [parameter_map()], [posterior_draws()], and `summary()`.
 #' The summary table is printed with all rows and columns by default.
 #' Use `print(summary(fit), n = 20)` to limit the displayed rows.
 #'
 #' @param x,object A `combo_fit` object.
-#' @param components,variable,include Selection arguments passed to
+#' @param robust Use posterior median and MAD instead of mean and SD in
+#'   `summary()`. MAD uses the defaults of [stats::mad()]. Quantiles and
+#'   convergence diagnostics are unchanged. Explicit summary functions in
+#'   `...` override this choice.
+#' @param select,include Selection arguments passed to
 #'   [posterior_draws()] by `summary()`.
 #' @param ... For `summary()`, arguments passed to
 #'   [posterior::summarize_draws()]. Supplying summary functions replaces its
@@ -232,16 +243,28 @@ print.combo_fit <- function(x, ...) {
 summary.combo_fit <- function(
     object,
     ...,
-    components = NULL,
-    variable = NULL,
+    robust = FALSE,
+    select = NULL,
     include = c("public", "all")
 ) {
-    posterior_summary <- posterior::summarize_draws(
-        posterior::as_draws_array(
-            object, components = components, variable = variable, include = include
-        ),
-        ...
+    if (!is_logical(robust)) {
+        cli::cli_abort("{.arg robust} must be TRUE or FALSE.")
+    }
+    arguments <- list(...)
+    combo_check_removed_selection(arguments)
+    argument_names <- names(arguments) %||% rep("", length(arguments))
+    controls <- c(".args", ".num_args", ".cores")
+    if (!any(!argument_names %in% controls)) {
+        measures <- c(
+            if (robust) c("median", "mad") else c("mean", "sd"),
+            "quantile2", posterior::default_convergence_measures()
+        )
+        arguments <- c(list(measures), arguments)
+    }
+    draws <- posterior::as_draws_array(
+        object, select = select, include = include
     )
+    posterior_summary <- do.call(posterior::summarize_draws, c(list(.x = draws), arguments))
     rmse <- vapply(object$draws, "[[", numeric(1), "last_rmse")
     precision <- vapply(object$draws, "[[", numeric(1), "precision")
     probs <- c(0.05, 0.5, 0.95)

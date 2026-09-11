@@ -878,7 +878,9 @@ table(screen$role)
 We fit all six models to the same observed rows. Sampler mechanics are covered
 in the introduction.  For chain diagnostics, posterior predictive checks, and LOO
 comparisons, see `vignette("model_checking", package = "batchieR")`. Here we
-focus on the consequences of the six model specifications.
+focus on the consequences of the six model specifications. Each fit uses two
+short chains to keep the vignette quick to build. Increase warmup and sampling
+and check convergence before using these comparisons for scientific conclusions.
 
 ```{r}
 #| label: fit-models
@@ -900,8 +902,8 @@ fits <- models |>
         compound_data = compound_data,
         chains = 2,
         parallel_chains = 1,
-        iter_warmup = 500,
-        iter_sampling = 500,
+        iter_warmup = 250,
+        iter_sampling = 250,
         thin = 1,
         refresh = 0
     )
@@ -930,7 +932,7 @@ feature_map$generating_prior_mean <- c(
 )[feature_map$feature]
 
 fits$features |>
-    posterior_draws(variable = feature_map$variable) |>
+    posterior_draws(select = feature_map$variable) |>
     bayesplot::mcmc_areas(
         prob = 0.8,
         prob_outer = 0.95,

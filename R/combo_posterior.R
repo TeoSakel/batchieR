@@ -124,30 +124,29 @@ predict_combo_draw <- function(draw, indices, rank) {
             get_snapshot_rows(V0, indices$treatment_1, 1L)[, 1L] +
             get_snapshot_rows(V0, indices$treatment_2, 1L)[, 1L]
     }
-    W <- draw$components$cell_factors
-    if (!is.null(W)) {
-        w <- W$value[indices$cell, , drop = FALSE]
-        V1 <- draw$components$treatment_main_factors
-        if (!is.null(V1)) {
-            main <- get_snapshot_rows(V1, indices$treatment_1, rank) +
-                get_snapshot_rows(V1, indices$treatment_2, rank)
-            mu <- mu + rowSums(w * main)
+    if (!is.null(draw$components$cell_factors)) {
+        if (!is.null(draw$components$treatment_main_factors)) {
+            mu <- mu + combo_factor_contribution(draw, indices, "main_effect")
         }
-        V2 <- draw$components$treatment_interaction_factors
-        if (!is.null(V2)) {
-            interaction <- get_snapshot_rows(
-                V2,
-                indices$treatment_1,
-                rank
-            ) * get_snapshot_rows(
-                V2,
-                indices$treatment_2,
-                rank
-            )
-            mu <- mu + rowSums(w * interaction)
+        if (!is.null(draw$components$treatment_interaction_factors)) {
+            mu <- mu + combo_factor_contribution(draw, indices, "interaction_effect")
         }
     }
     mu
+}
+
+combo_factor_contribution <- function(snapshot, indices, component) {
+    W <- snapshot$components$cell_factors$value
+    rank <- ncol(W)
+    treatment <- if (component == "main_effect") {
+        snapshot$components$treatment_main_factors
+    } else {
+        snapshot$components$treatment_interaction_factors
+    }
+    first <- get_snapshot_rows(treatment, indices$treatment_1, rank)
+    second <- get_snapshot_rows(treatment, indices$treatment_2, rank)
+    design <- if (component == "main_effect") first + second else first * second
+    rowSums(W[indices$cell, , drop = FALSE] * design)
 }
 
 combo_prediction_indices <- function(fit, newdata) {
@@ -241,15 +240,30 @@ as_draws_rvars.combo_fit <- function(x, ...) {
 #'
 #' Converts retained Gibbs snapshots to a numeric iterations-by-chains-by-variables
 #' array. Public variables include the intercept, observation scale and precision,
-#' enabled component values, global mean coefficients, and shrinkage precisions. Use the
+#' offsets and their shrinkage precisions, global mean coefficients, and
+#' `main_effect[combo_id]` and `interaction_effect[combo_id]`. These contributions
+#' sum over latent dimensions within each draw and occur once per unique cell
+#' and unordered treatment pair; see [combo_map()] and [row_map()]. Singles have
+#' a main contribution but no interaction variable. Disabled factor components
+#' have no contribution variables. Individual factor coordinates and their
+#' shrinkage precisions require `include = "all"`. Use the
 #' `posterior::as_draws*()` methods when a `posterior` draws format is required.
 #'
 #' @param fit A `combo_fit` object.
-#' @param components Optional character vector of model components to retain.
-#' @param variable Optional character vector of exact posterior variable names.
-#'   It is mutually exclusive with `components`.
+#' @param select Optional nonempty character vector of exact variable names or
+#'   literal prefixes. An exact name selects only that variable; otherwise all
+#'   names starting with the supplied prefix are selected. For example,
+#'   `c("sigma", "main_effect")` selects the observation scale and all main
+#'   contributions. `"cell_offset"` also includes its shrinkage precisions;
+#'   `"cell_offset["` selects only offset values. Matches follow the order of
+#'   `select`, with prefix matches in [parameter_map()] order and duplicates
+#'   removed. Unmatched entries are errors. `NULL` selects all available variables.
+#'   Matching uses variable names, not component metadata: select `"intercept"`
+#'   and `"beta"` to request global mean parameters.
 #' @param include `"public"` for the stable fitted-model interface or `"all"`
-#'   to additionally include raw nodes, fitted means, and sampler diagnostics.
+#'   to additionally include individual factors, their shrinkage precisions,
+#'   raw nodes, fitted means, and sampler diagnostics. Use [parameter_map()]
+#'   with the same `include` setting to discover variable names.
 #' @param x A `combo_fit` object passed to a [posterior] conversion generic.
 #' @param ... Selection arguments forwarded to `posterior_draws()`.
 #' @return `posterior_draws()` returns a numeric three-dimensional array. The
@@ -257,91 +271,138 @@ as_draws_rvars.combo_fit <- function(x, ...) {
 #' @export
 posterior_draws <- function(
     fit,
-    components = NULL,
-    variable = NULL,
+    select = NULL,
     include = c("public", "all")
 ) {
     validate_combo_fit(fit)
     include <- match.arg(include)
-    if (!is.null(components) && !is.null(variable)) {
-        cli::cli_abort("components and variable are mutually exclusive")
-    }
-    draws <- combo_draws_array(fit, include)
     map <- parameter_map(fit, include)
     selected <- map$variable
-    if (!is.null(components)) {
-        valid <- names(fit$model$components)
-        unknown <- setdiff(components, valid)
-        if (length(unknown)) {
-            cli::cli_abort("Unknown components: {.and {unknown}}")
+    if (!is.null(select)) {
+        if (!is.character(select) || !length(select) || anyNA(select) ||
+            any(!nzchar(select))) {
+            cli::cli_abort("{.arg select} must be NULL or a nonempty character vector of nonempty names or prefixes.")
         }
-        selected <- map$variable[map$component %in% components]
-        if (!length(selected)) {
-            cli::cli_abort("Selected components have no posterior variables")
+        matches <- lapply(select, function(prefix) {
+            if (prefix %in% map$variable) prefix else map$variable[startsWith(map$variable, prefix)]
+        })
+        unmatched <- unique(select[lengths(matches) == 0L])
+        if (length(unmatched)) {
+            hidden <- character()
+            if (include == "public") {
+                all_variables <- parameter_map(fit, "all")$variable
+                hidden <- unmatched[vapply(unmatched, function(prefix) {
+                    any(startsWith(all_variables, prefix))
+                }, logical(1))]
+            }
+            unknown <- setdiff(unmatched, hidden)
+            cli::cli_abort(c(
+                "No posterior variables match {.arg select}.",
+                if (length(unknown)) c("x" = "Unmatched names or prefixes: {.and {unknown}}."),
+                if (length(hidden)) c("i" = 'Selections requiring include = "all": {.and {hidden}}.')
+            ))
         }
-    } else if (!is.null(variable)) {
-        unknown <- setdiff(variable, map$variable)
-        if (length(unknown)) {
-            cli::cli_abort("Unknown variables: {.and {unknown}}")
-        }
-        selected <- variable
+        selected <- unique(unlist(matches, use.names = FALSE))
     }
-    draws[, , selected, drop = FALSE]
+    combo_draws_array(fit, map[match(selected, map$variable), , drop = FALSE])
 }
 
-combo_draws_array <- function(fit, include) {
-    chain_sizes <- tabulate(
-        fit$chain_id,
-        nbins = max(fit$chain_id)
-    )
+combo_check_removed_selection <- function(arguments) {
+    removed <- intersect(names(arguments), c("variable", "components"))
+    if (length(removed)) {
+        cli::cli_abort("{.arg {removed}} no longer supported; use {.arg select} for variable names or prefixes.")
+    }
+}
+
+combo_draws_array <- function(fit, map) {
+    chain_sizes <- tabulate(fit$chain_id, nbins = max(fit$chain_id))
     if (!length(chain_sizes) || any(chain_sizes != chain_sizes[1L])) {
         cli::cli_abort("combo_fit contains unbalanced posterior chains")
     }
-    flattened <- lapply(
-        seq_along(fit$draws),
-        function(index) {
-            combo_flatten_snapshot(
-                fit,
-                fit$draws[[index]],
-                index,
-                include
-            )
+    # Resolve groups and selected combinations once, before visiting snapshots.
+    groups <- split(seq_len(nrow(map)), paste(map$component, map$parameter, sep = ":"))
+    combos <- if (any(map$entity_type %in% "combo")) combo_index_map(fit)$combos else NULL
+    selections <- lapply(groups, function(positions) map[positions, , drop = FALSE])
+    indices <- lapply(selections, function(selected) {
+        if (selected$parameter[1L] == "contribution") {
+            combos[selected$entity_index, , drop = FALSE]
+        } else {
+            NULL
         }
-    )
-    variable_names <- names(flattened[[1L]])
-    consistent <- vapply(
-        flattened,
-        function(draw) identical(names(draw), variable_names),
-        logical(1)
-    )
-    if (!all(consistent)) {
-        cli::cli_abort("Posterior snapshots do not share a stable variable schema")
-    }
+    })
+    schema <- combo_snapshot_schema(fit$draws[[1L]])
     values <- array(
-        NA_real_,
-        dim = c(
-            chain_sizes[1L],
-            length(chain_sizes),
-            length(variable_names)
-        ),
-        dimnames = list(
-            iteration = as.character(seq_len(chain_sizes[1L])),
-            chain = as.character(seq_along(chain_sizes)),
-            variable = variable_names
-        )
+        NA_real_, dim = c(chain_sizes[1L], length(chain_sizes), nrow(map)),
+        dimnames = list(iteration = as.character(seq_len(chain_sizes[1L])),
+                        chain = as.character(seq_along(chain_sizes)), variable = map$variable)
     )
-    for (index in seq_along(flattened)) {
-        values[fit$draw_id[index], fit$chain_id[index], ] <-
-            flattened[[index]]
+    for (index in seq_along(fit$draws)) {
+        snapshot <- fit$draws[[index]]
+        if (!identical(combo_snapshot_schema(snapshot), schema)) {
+            cli::cli_abort("Posterior snapshots do not share a stable variable schema")
+        }
+        for (group in seq_along(groups)) {
+            values[fit$draw_id[index], fit$chain_id[index], groups[[group]]] <-
+                combo_extract_snapshot(fit, snapshot, index, selections[[group]], indices[[group]])
+        }
     }
     values
+}
+
+combo_snapshot_schema <- function(snapshot) {
+    list(
+        beta = names(snapshot$beta), fitted_mean = length(snapshot$fitted_mean),
+        components = lapply(snapshot$components, function(x) {
+            if (is.null(x)) return(NULL)
+            list(
+                value = dim(x$value),
+                value_names = dimnames(x$value),
+                global = length(x$global_precision),
+                local = dim(x$local_precision),
+                raw = dim(x$raw),
+                raw_names = dimnames(x$raw)
+            )
+        })
+    )
+}
+
+combo_extract_snapshot <- function(fit, snapshot, draw_index, map, indices) {
+    component <- map$component[1L]
+    parameter <- map$parameter[1L]
+    if (parameter == "contribution") {
+        return(combo_factor_contribution(snapshot, indices, component))
+    }
+    if (component == "mean") {
+        return(if (parameter == "intercept") snapshot$intercept else snapshot$beta[map$feature])
+    }
+    if (component == "observation") {
+        return(switch(parameter,
+            scale = 1 / sqrt(snapshot$precision),
+            precision = snapshot$precision,
+            fitted_mean = snapshot$fitted_mean[map$entity_index]
+        ))
+    }
+    if (component == "sampler") {
+        return(switch(parameter,
+            rmse = snapshot$last_rmse,
+            step = snapshot$n_steps,
+            iteration = fit$iteration[draw_index]
+        ))
+    }
+    value <- snapshot$components[[component]][[parameter]]
+    if (parameter == "global_precision") return(value[map$dimension])
+    value[cbind(map$entity_index, map$dimension)]
 }
 
 #' Map posterior variables to model entities
 #'
 #' Returns stable variable names and their component, parameter, entity, latent
 #' dimension, and metadata-feature meanings. Rows are aligned with the variable
-#' dimension returned by [posterior_draws()].
+#' dimension returned by [posterior_draws()]. Aggregate contributions refer to
+#' [combo_map()] IDs in `entity_index` with `entity_type = "combo"`; they have
+#' no latent dimension. Cell and treatment indices refer to [cell_map()] and
+#' [treatment_map()]. Use `include = "all"` in both mapping and extraction to
+#' inspect individual factors and their shrinkage precisions.
 #'
 #' The canonical names can be passed directly to [posterior::rename_variables()]
 #' or used to construct a programmatic renaming call. Renaming changes only the
@@ -390,7 +451,7 @@ parameter_map <- function(fit, include = c("public", "all")) {
     }
     for (component_name in names(snapshot$components)) {
         component <- snapshot$components[[component_name]]
-        if (is.null(component)) {
+        if (is.null(component) || (include == "public" && endsWith(component_name, "_factors"))) {
             next
         }
         result[[length(result) + 1L]] <- combo_matrix_map(
@@ -461,73 +522,25 @@ parameter_map <- function(fit, include = c("public", "all")) {
             )
         )
     }
+    combos <- combo_index_map(fit)$combos
+    factor_components <- c(main_effect = "treatment_main_factors",
+                           interaction_effect = "treatment_interaction_factors")
+    for (name in names(factor_components)) {
+        if (is.null(snapshot$components[[factor_components[[name]]]])) next
+        ids <- seq_len(nrow(combos))
+        if (name == "interaction_effect") {
+            ids <- ids[combos$treatment_1 > 0L & combos$treatment_2 > 0L]
+        }
+        if (!length(ids)) next
+        contribution <- combo_basic_map_row(paste0(name, "[", ids, "]"), name, "contribution")
+        contribution$entity_type <- "combo"
+        contribution$entity_index <- ids
+        contribution$entity_key <- as.character(ids)
+        contribution$entity_label <- as.character(ids)
+        result[[length(result) + 1L]] <- contribution
+    }
     result <- do.call(rbind, result)
     rownames(result) <- NULL
-    expected <- names(combo_flatten_snapshot(fit, snapshot, 1L, include))
-    if (!identical(result$variable, expected)) {
-        cli::cli_abort("Internal posterior variable map is inconsistent")
-    }
-    result
-}
-
-combo_flatten_snapshot <- function(fit, snapshot, draw_index, include) {
-    result <- c(
-        intercept = snapshot$intercept,
-        sigma = 1 / sqrt(snapshot$precision),
-        observation_precision = snapshot$precision
-    )
-    if (length(snapshot$beta)) {
-        beta <- as.numeric(snapshot$beta)
-        names(beta) <- combo_vector_variable_names("beta", snapshot$beta)
-        result <- c(result, beta)
-    }
-    for (component_name in names(snapshot$components)) {
-        component <- snapshot$components[[component_name]]
-        if (is.null(component)) {
-            next
-        }
-        values <- as.numeric(component$value)
-        names(values) <- combo_matrix_variable_names(
-            component_name,
-            component$value
-        )
-        result <- c(result, values)
-        global <- as.numeric(component$global_precision)
-        names(global) <- combo_vector_variable_names(
-            paste0(component_name, "_global_precision"),
-            component$global_precision
-        )
-        result <- c(result, global)
-        if (!is.null(component$local_precision)) {
-            local <- as.numeric(component$local_precision)
-            names(local) <- combo_matrix_variable_names(
-                paste0(component_name, "_local_precision"),
-                component$local_precision
-            )
-            result <- c(result, local)
-        }
-        if (include == "all") {
-            raw <- as.numeric(component$raw)
-            names(raw) <- combo_matrix_variable_names(
-                paste0(component_name, "_raw"),
-                component$raw
-            )
-            result <- c(result, raw)
-        }
-    }
-    if (include == "all") {
-        fitted_mean <- as.numeric(snapshot$fitted_mean)
-        names(fitted_mean) <- combo_vector_variable_names(
-            "fitted_mean",
-            snapshot$fitted_mean
-        )
-        diagnostics <- c(
-            sampler_rmse = snapshot$last_rmse,
-            sampler_step = snapshot$n_steps,
-            sampler_iteration = fit$iteration[draw_index]
-        )
-        result <- c(result, fitted_mean, diagnostics)
-    }
     result
 }
 

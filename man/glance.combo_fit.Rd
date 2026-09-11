@@ -25,5 +25,7 @@ Reports dimensions, observation scale, sampler RMSE, and convergence
 extrema across public posterior variables. No LOO or information criteria
 are calculated. Missing diagnostics are counted separately and excluded
 from extrema; infinite values are retained. An entirely unavailable
-diagnostic has an \code{NA} extremum.
+diagnostic has an \code{NA} extremum. Public factor variables are aggregated main
+and interaction contributions indexed by \code{\link[=combo_map]{combo_map()}}. These diagnostics
+do not establish convergence of the individual latent factors.
 }

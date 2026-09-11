@@ -318,29 +318,71 @@ fit <- fit_combo(
 The result is a `combo_fit` object containing the posterior draws and the
 information needed for prediction and model checking. Printing it gives an
 overview of the data and sampling run, followed by compact convergence
-diagnostics across the public posterior variables:
+diagnostics across the public posterior variables. The diagnostics report the
+maximum R-hat, minimum bulk and tail ESS, and counts of unavailable values
+across public posterior variables:
 
 ```{r print-fit}
 fit
 ```
 
-The diagnostics report the maximum R-hat, minimum bulk and tail ESS, and
-counts of unavailable values across public posterior variables. `summary()`
-provides parameter estimates, credible intervals, and diagnostics for individual
-variables. Here we select the observation scale and precision:
+`summary()` provides estimates, credible intervals, and diagnostics for
+individual public variables or groups selected by name prefix. Exact variable
+names select only that variable; otherwise `select` expands to every available
+name starting with the supplied text. Overlapping selections are included once,
+and unmatched entries are errors.
 
-```{r summarize-fit}
-summary(fit, variable = c("sigma", "observation_precision"))
+```{r summary-fit}
+summary(fit, select = c("sigma", "observation_precision", "main_effect", "interaction_effect"))
 ```
+
+The component terms `main_effect[combo_id]` and `interaction_effect[combo_id]`
+are calculated within each posterior draw as
+
+$$
+\begin{aligned}
+\mathrm{main\_effect}_{kij}
+    &= \sum_{h=1}^{d} W^{(1)}_{kh}\left(V^{(1)}_{ih} + V^{(1)}_{jh}\right), \\
+\mathrm{interaction\_effect}_{kij}
+    &= \sum_{h=1}^{d} W^{(1)}_{kh} V^{(2)}_{ih} V^{(2)}_{jh}.
+\end{aligned}
+$$
+
+Here `combo_id` is the integer index corresponding to the cell-treatment
+combination $kij$, with $(k,i,j)$ and $(k,j,i)$ sharing the same ID. Singles
+omit the second-treatment main term and have no interaction variable; disabled
+factor components have no corresponding contribution variables.
+
+```{r combo-map-fit}
+combo_map(fit)
+```
+
+Besides, `combo_map()` which reports unique cell and drug-dose pair combinations,
+`cell_map()` and `treatment_map()` can be used to identify unique cells
+and treatments (drug-dose) to variable indices. `row_map()` connects original
+input rows to these combinations including replicates
+
 
 A `combo_fit` object is also compatible with the standard `broom` verbs:
 `tidy()`, `glance()`, and `augment()`. The API is similar to `rstan::tidy()` and
-`broom.mixed::tidy()`, with the addition of a `components` argument to select
-which model component to summarize. For example, we can extract the posterior
-draws of the cell offsets:
+`broom.mixed::tidy()`, with a `select` argument accepting variable names or
+prefixes. For example, we can summarize the cell offsets and their shrinkage
+precisions (use `"cell_offset["` to select only offset values):
 
 ```{r tidy-fit}
-tidy(fit, components = "cell_offset")
+tidy(fit, select = "cell_offset")
+```
+
+Individual factors and their shrinkage precisions are excluded from the public
+defaults. To inspect them, use `include = "all"` consistently in the parameter
+map and extraction or summary. Existing expert variable names are unchanged.
+
+```{r expert-factors}
+expert <- parameter_map(fit, include = "all")
+factor_variables <- subset(
+    expert, component == "cell_factors" & parameter == "global_precision"
+)$variable
+summary(fit, include = "all", select = factor_variables)
 ```
 
 ## Posterior predictive checks

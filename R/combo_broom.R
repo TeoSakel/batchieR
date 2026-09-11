@@ -17,6 +17,9 @@ generics::augment
 #' Returns summaries of all public posterior variables by default, retaining
 #' canonical parameter names and their order. Selection follows
 #' [posterior_draws()]. Chain boundaries are preserved for diagnostics.
+#' Factor contributions are summed over latent dimensions and reported once
+#' per [combo_map()] entry, rather than once per observation or latent factor.
+#' Individual factors and their precisions require `include = "all"`.
 #'
 #' @param x A `combo_fit` object.
 #' @param robust Use posterior median and MAD instead of mean and SD.
@@ -37,11 +40,11 @@ tidy.combo_fit <- function(
     robust = FALSE,
     conf.int = TRUE,
     conf.level = 0.95,
-    components = NULL,
-    variable = NULL,
+    select = NULL,
     include = c("public", "all"),
     ...
 ) {
+    combo_check_removed_selection(list(...))
     if (...length()) cli::cli_warn("Unused arguments in {.code ...} are ignored.")
     if (!is_logical(robust)) {
         cli::cli_abort("{.arg robust} must be TRUE or FALSE.")
@@ -54,7 +57,7 @@ tidy.combo_fit <- function(
     }
     include <- match.arg(include)
     draws <- posterior::as_draws_array(
-        x, components = components, variable = variable, include = include
+        x, select = select, include = include
     )
     measures <- c(
         if (robust) c("median", "mad") else c("mean", "sd"),
@@ -82,7 +85,9 @@ tidy.combo_fit <- function(
 #' extrema across public posterior variables. No LOO or information criteria
 #' are calculated. Missing diagnostics are counted separately and excluded
 #' from extrema; infinite values are retained. An entirely unavailable
-#' diagnostic has an `NA` extremum.
+#' diagnostic has an `NA` extremum. Public factor variables are aggregated main
+#' and interaction contributions indexed by [combo_map()]. These diagnostics
+#' do not establish convergence of the individual latent factors.
 #'
 #' @inheritParams tidy.combo_fit
 #' @return A one-row tibble with `nobs` (observed responses), `n_cells`,

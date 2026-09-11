@@ -42,19 +42,17 @@ test_that("robust tidy summaries only change location and spread", {
 
 test_that("tidy selections preserve requested order and map alignment", {
     fit <- combo_test_fit()
-    selected <- tidy(fit, variable = c("sigma", "intercept"))
+    selected <- tidy(fit, select = c("sigma", "intercept"))
     expect_identical(selected$term, c("sigma", "intercept"))
     expect_identical(selected$component, c("observation", "mean"))
     map <- parameter_map(fit)
-    selected <- tidy(fit, components = "cell_offset")
+    selected <- tidy(fit, select = "cell_offset")
     expect_identical(selected$term, map$variable[map$component == "cell_offset"])
     all_map <- parameter_map(fit, include = "all")
     expect_identical(tidy(fit, include = "all")$term, all_map$variable)
-    expect_identical(tidy(fit, include = "all", variable = "sampler_rmse")$parameter, "rmse")
-    expect_error(tidy(fit, variable = "absent"), "Unknown variables")
-    expect_error(tidy(fit, components = "absent"), "Unknown components")
-    expect_error(tidy(fit, components = "cell_factors"), "no posterior variables")
-    expect_error(tidy(fit, variable = "sigma", components = "cell_offset"), "mutually exclusive")
+    expect_identical(tidy(fit, include = "all", select = "sampler_rmse")$parameter, "rmse")
+    expect_error(tidy(fit, select = "absent"), "Unmatched names or prefixes")
+    expect_error(tidy(fit, select = "cell_factors"), "Unmatched names or prefixes")
 })
 
 test_that("glance reports dimensions and diagnostics without removing unavailable counts", {

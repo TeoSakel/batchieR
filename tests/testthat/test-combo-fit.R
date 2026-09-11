@@ -96,7 +96,7 @@ test_that("the default latent-factor model fits every component", {
 
     expect_true(all(vapply(fit$draws[[1L]]$components, Negate(is.null), logical(1))))
     expect_identical(dim(posterior_epred(fit)), c(2L, 6L))
-    map <- parameter_map(fit)
+    map <- parameter_map(fit, include = "all")
     expect_true(any(map$component == "cell_factors"))
     expect_true(any(map$component == "treatment_main_factors"))
     expect_true(any(map$component == "treatment_interaction_factors"))

@@ -12,8 +12,8 @@
 \method{summary}{combo_fit}(
   object,
   ...,
-  components = NULL,
-  variable = NULL,
+  robust = FALSE,
+  select = NULL,
   include = c("public", "all")
 )
 
@@ -27,7 +27,12 @@
 default measures. For \code{print.summary.combo_fit()}, table printing options
 passed to \code{print()} (such as \code{n} and \code{width}). Unused by \code{print.combo_fit()}.}
 
-\item{components, variable, include}{Selection arguments passed to
+\item{robust}{Use posterior median and MAD instead of mean and SD in
+\code{summary()}. MAD uses the defaults of \code{\link[stats:mad]{stats::mad()}}. Quantiles and
+convergence diagnostics are unchanged. Explicit summary functions in
+\code{...} override this choice.}
+
+\item{select, include}{Selection arguments passed to
 \code{\link[=posterior_draws]{posterior_draws()}} by \code{summary()}.}
 }
 \value{
@@ -40,15 +45,22 @@ containing the draws summary table.
 \description{
 \code{print()} reports sampling dimensions, model rank, modeled entities, maximum R-hat,
 minimum bulk and tail effective sample sizes (ESS), and counts of unavailable
-diagnostics across public posterior variables.
+diagnostics across public posterior variables. Factor terms are represented
+by \code{main_effect[combo_id]} and \code{interaction_effect[combo_id]}, summed over
+latent dimensions within each draw. Replicates and reversed treatment order
+share a combo ID; see \code{\link[=combo_map]{combo_map()}} and \code{\link[=row_map]{row_map()}}.
 \code{summary()} adds a per-variable \code{\link[posterior:summarize_draws]{posterior::summarize_draws()}} table with
-means, medians, standard deviations, MADs, 5\% and 95\% quantiles, R-hat,
-bulk ESS, and tail ESS by default. Chain boundaries are preserved.
+means and standard deviations (or medians and MADs with \code{robust = TRUE}),
+5\% and 95\% quantiles, R-hat, bulk ESS, and tail ESS by default.
+Chain boundaries are preserved.
 }
 \details{
 Diagnostics may be unavailable for short or constant chains. Unavailable
 values are retained in the summary and counted separately in \code{print()}.
-Diagnostics for latent factors can also reflect their non-identifiability.
+Aggregate diagnostics assess these contributions, not convergence or
+identifiability of the latent decomposition. Individual factor coordinates
+and their shrinkage precisions are available with \code{include = "all"} in
+\code{\link[=parameter_map]{parameter_map()}}, \code{\link[=posterior_draws]{posterior_draws()}}, and \code{summary()}.
 The summary table is printed with all rows and columns by default.
 Use \code{print(summary(fit), n = 20)} to limit the displayed rows.
 }

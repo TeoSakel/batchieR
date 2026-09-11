@@ -186,7 +186,7 @@ score_plate_pdbal <- function(
     )
     precision_draws <- posterior_draws(
         fit,
-        variable = "observation_precision"
+        select = "observation_precision"
     )
     precisions <- as.numeric(precision_draws[, , "observation_precision"])
     if (length(precisions) != nrow(reference_predictions) ||

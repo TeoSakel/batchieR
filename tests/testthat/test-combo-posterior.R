@@ -15,10 +15,10 @@ test_that("posterior draws and parameter maps share a stable schema", {
         )
     )
 
-    selected <- posterior_draws(fit, variable = c("intercept", "sigma"))
+    selected <- posterior_draws(fit, select = c("intercept", "sigma"))
     expect_identical(dimnames(selected)$variable, c("intercept", "sigma"))
 
-    component <- posterior_draws(fit, components = "cell_offset")
+    component <- posterior_draws(fit, select = "cell_offset")
     expect_true(all(grepl("^cell_offset", dimnames(component)$variable)))
 
     all_map <- parameter_map(fit, include = "all")
@@ -32,12 +32,11 @@ test_that("posterior draw selection rejects malformed requests and fits", {
     fit <- combo_test_fit()
 
     expect_error(
-        posterior_draws(fit, components = "cell_offset", variable = "intercept"),
-        "mutually exclusive"
+        posterior_draws(fit, variable = "intercept"),
+        "unused argument"
     )
-    expect_error(posterior_draws(fit, components = "unknown"), "Unknown components")
-    expect_error(posterior_draws(fit, components = "cell_factors"), "no posterior variables")
-    expect_error(posterior_draws(fit, variable = "unknown"), "Unknown variables")
+    expect_error(posterior_draws(fit, select = "cell_factors"), "Unmatched names or prefixes")
+    expect_error(posterior_draws(fit, select = "unknown"), "Unmatched names or prefixes")
     expect_error(posterior_draws(list()), "fit must be a combo_fit")
     expect_error(parameter_map(list()), "fit must be a combo_fit")
 
@@ -277,4 +276,54 @@ test_that("prediction observation flags use strict scalar logical validation", {
     expected <- posterior_predict(fit)
     set.seed(17)
     expect_identical(predict(fit, observation = TRUE), expected)
+})
+
+
+test_that("selection expands literal prefixes in requested order without duplicates", {
+    fit <- combo_test_fit()
+    draws <- posterior_draws(fit)
+    offsets <- c("cell_offset[1]", "cell_offset[2]", "cell_offset_global_precision[1]")
+    expected <- c("sigma", "cell_offset[2]", offsets[c(1, 3)], "intercept")
+    select <- c("sigma", "cell_offset[2]", "cell_offset", "intercept", "sigma")
+    expect_equal(posterior_draws(fit, select = select), draws[, , expected, drop = FALSE])
+    expect_equal(posterior_draws(fit, select = "cell_offset["),
+                 draws[, , offsets[1:2], drop = FALSE])
+    expect_equal(posterior_draws(fit, select = "sig"), draws[, , "sigma", drop = FALSE])
+    expect_identical(summary(fit, select = select)$posterior_summary$variable, expected)
+    expect_identical(tidy(fit, select = select)$term, expected)
+    for (convert in list(posterior::as_draws, posterior::as_draws_array,
+                         posterior::as_draws_matrix, posterior::as_draws_df,
+                         posterior::as_draws_list, posterior::as_draws_rvars)) {
+        expect_equal(convert(fit, select = select), convert(draws[, , expected, drop = FALSE]))
+    }
+    for (invalid in list(character(), "", NA_character_, c("sigma", NA_character_),
+                         1, TRUE, list("sigma"))) {
+        expect_error(posterior_draws(fit, select = invalid), "nonempty character vector")
+    }
+    expect_error(posterior_draws(fit, select = c("sigma", "missing")), "missing")
+    expect_error(posterior_draws(fit, select = "cell_offset.*"), "Unmatched")
+    expect_error(posterior_draws(fit, select = "mean"), "Unmatched")
+    expect_error(posterior_draws(fit, components = "cell_offset"), "unused argument")
+    expect_error(summary(fit, variable = "sigma"), "use.*select")
+    expect_error(summary(fit, components = "cell_offset"), "use.*select")
+    expect_error(tidy(fit, variable = "sigma"), "use.*select")
+    expect_error(tidy(fit, components = "cell_offset"), "use.*select")
+})
+
+test_that("prefix selection respects public and expert visibility", {
+    fit <- combo_test_fit(model = combo_model(rank = 2L))
+    public <- posterior_draws(fit)
+    all <- posterior_draws(fit, include = "all")
+    expect_equal(posterior_draws(fit, select = "cell_"),
+                 public[, , startsWith(dimnames(public)$variable, "cell_"), drop = FALSE])
+    expert_names <- dimnames(all)$variable[startsWith(dimnames(all)$variable, "cell_factors")]
+    expect_equal(posterior_draws(fit, select = "cell_factors", include = "all"),
+                 all[, , expert_names, drop = FALSE])
+    expect_error(posterior_draws(fit, select = "cell_factors"), 'include = "all"', fixed = TRUE)
+    expect_error(posterior_draws(fit, select = c("missing", "cell_factors")), "missing")
+    expect_error(posterior_draws(fit, select = c("missing", "cell_factors")),
+                 'include = "all"', fixed = TRUE)
+    selected <- c("sigma", "main_effect")
+    expected <- c("sigma", dimnames(public)$variable[startsWith(dimnames(public)$variable, "main_effect")])
+    expect_equal(posterior_draws(fit, select = selected), public[, , expected, drop = FALSE])
 })

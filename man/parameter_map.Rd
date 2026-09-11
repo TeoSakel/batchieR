@@ -10,7 +10,9 @@ parameter_map(fit, include = c("public", "all"))
 \item{fit}{A \code{combo_fit} object.}
 
 \item{include}{\code{"public"} for the stable fitted-model interface or \code{"all"}
-to additionally include raw nodes, fitted means, and sampler diagnostics.}
+to additionally include individual factors, their shrinkage precisions,
+raw nodes, fitted means, and sampler diagnostics. Use \code{\link[=parameter_map]{parameter_map()}}
+with the same \code{include} setting to discover variable names.}
 }
 \value{
 A data frame with one row per posterior variable.
@@ -18,7 +20,11 @@ A data frame with one row per posterior variable.
 \description{
 Returns stable variable names and their component, parameter, entity, latent
 dimension, and metadata-feature meanings. Rows are aligned with the variable
-dimension returned by \code{\link[=posterior_draws]{posterior_draws()}}.
+dimension returned by \code{\link[=posterior_draws]{posterior_draws()}}. Aggregate contributions refer to
+\code{\link[=combo_map]{combo_map()}} IDs in \code{entity_index} with \code{entity_type = "combo"}; they have
+no latent dimension. Cell and treatment indices refer to \code{\link[=cell_map]{cell_map()}} and
+\code{\link[=treatment_map]{treatment_map()}}. Use \code{include = "all"} in both mapping and extraction to
+inspect individual factors and their shrinkage precisions.
 }
 \details{
 The canonical names can be passed directly to \code{\link[posterior:rename_variables]{posterior::rename_variables()}}

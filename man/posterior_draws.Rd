@@ -22,12 +22,7 @@
 
 \method{as_draws_rvars}{combo_fit}(x, ...)
 
-posterior_draws(
-  fit,
-  components = NULL,
-  variable = NULL,
-  include = c("public", "all")
-)
+posterior_draws(fit, select = NULL, include = c("public", "all"))
 }
 \arguments{
 \item{x}{A \code{combo_fit} object passed to a \link[posterior:posterior]{posterior} conversion generic.}
@@ -36,13 +31,21 @@ posterior_draws(
 
 \item{fit}{A \code{combo_fit} object.}
 
-\item{components}{Optional character vector of model components to retain.}
-
-\item{variable}{Optional character vector of exact posterior variable names.
-It is mutually exclusive with \code{components}.}
+\item{select}{Optional nonempty character vector of exact variable names or
+literal prefixes. An exact name selects only that variable; otherwise all
+names starting with the supplied prefix are selected. For example,
+\code{c("sigma", "main_effect")} selects the observation scale and all main
+contributions. \code{"cell_offset"} also includes its shrinkage precisions;
+\code{"cell_offset["} selects only offset values. Matches follow the order of
+\code{select}, with prefix matches in \code{\link[=parameter_map]{parameter_map()}} order and duplicates
+removed. Unmatched entries are errors. \code{NULL} selects all available variables.
+Matching uses variable names, not component metadata: select \code{"intercept"}
+and \code{"beta"} to request global mean parameters.}
 
 \item{include}{\code{"public"} for the stable fitted-model interface or \code{"all"}
-to additionally include raw nodes, fitted means, and sampler diagnostics.}
+to additionally include individual factors, their shrinkage precisions,
+raw nodes, fitted means, and sampler diagnostics. Use \code{\link[=parameter_map]{parameter_map()}}
+with the same \code{include} setting to discover variable names.}
 }
 \value{
 \code{posterior_draws()} returns a numeric three-dimensional array. The
@@ -51,6 +54,12 @@ to additionally include raw nodes, fitted means, and sampler diagnostics.}
 \description{
 Converts retained Gibbs snapshots to a numeric iterations-by-chains-by-variables
 array. Public variables include the intercept, observation scale and precision,
-enabled component values, global mean coefficients, and shrinkage precisions. Use the
+offsets and their shrinkage precisions, global mean coefficients, and
+\code{main_effect[combo_id]} and \code{interaction_effect[combo_id]}. These contributions
+sum over latent dimensions within each draw and occur once per unique cell
+and unordered treatment pair; see \code{\link[=combo_map]{combo_map()}} and \code{\link[=row_map]{row_map()}}. Singles have
+a main contribution but no interaction variable. Disabled factor components
+have no contribution variables. Individual factor coordinates and their
+shrinkage precisions require \code{include = "all"}. Use the
 \verb{posterior::as_draws*()} methods when a \code{posterior} draws format is required.
 }

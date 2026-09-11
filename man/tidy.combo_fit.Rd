@@ -9,8 +9,7 @@
   robust = FALSE,
   conf.int = TRUE,
   conf.level = 0.95,
-  components = NULL,
-  variable = NULL,
+  select = NULL,
   include = c("public", "all"),
   ...
 )
@@ -26,13 +25,21 @@ or convergence diagnostics.}
 
 \item{conf.level}{Credible interval probability, strictly between zero and one.}
 
-\item{components}{Optional character vector of model components to retain.}
-
-\item{variable}{Optional character vector of exact posterior variable names.
-It is mutually exclusive with \code{components}.}
+\item{select}{Optional nonempty character vector of exact variable names or
+literal prefixes. An exact name selects only that variable; otherwise all
+names starting with the supplied prefix are selected. For example,
+\code{c("sigma", "main_effect")} selects the observation scale and all main
+contributions. \code{"cell_offset"} also includes its shrinkage precisions;
+\code{"cell_offset["} selects only offset values. Matches follow the order of
+\code{select}, with prefix matches in \code{\link[=parameter_map]{parameter_map()}} order and duplicates
+removed. Unmatched entries are errors. \code{NULL} selects all available variables.
+Matching uses variable names, not component metadata: select \code{"intercept"}
+and \code{"beta"} to request global mean parameters.}
 
 \item{include}{\code{"public"} for the stable fitted-model interface or \code{"all"}
-to additionally include raw nodes, fitted means, and sampler diagnostics.}
+to additionally include individual factors, their shrinkage precisions,
+raw nodes, fitted means, and sampler diagnostics. Use \code{\link[=parameter_map]{parameter_map()}}
+with the same \code{include} setting to discover variable names.}
 
 \item{...}{Unused arguments are ignored with a warning.}
 }
@@ -47,4 +54,7 @@ identifier represented by \code{term}. Unavailable diagnostics remain \code{NA}.
 Returns summaries of all public posterior variables by default, retaining
 canonical parameter names and their order. Selection follows
 \code{\link[=posterior_draws]{posterior_draws()}}. Chain boundaries are preserved for diagnostics.
+Factor contributions are summed over latent dimensions and reported once
+per \code{\link[=combo_map]{combo_map()}} entry, rather than once per observation or latent factor.
+Individual factors and their precisions require \code{include = "all"}.
 }
