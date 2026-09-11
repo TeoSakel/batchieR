@@ -1,0 +1,31 @@
+"id","sampler","description","function_source"
+"gibbs","Current batchieR Gibbs sampler","Fixed block order: mean, cell offsets, treatment offsets, cell factors, interaction factors, main treatment factors, hyperparameters, observation precision. Each chain uses the package's zero-initialized component values and default precision initialization, with an independent RNG stream. This is the unmodified fit_combo() baseline.","function (model, data, settings) 
+{
+    do.call(batchieR::fit_combo, c(list(model = model, data = data), 
+        settings))
+}"
+"gibbs_cmi","Gibbs factor order CMI","Fixed block order: mean, cell_offset, treatment_offset, cell_factors, treatment_main_factors, treatment_interaction_factors, hyperparameters, observation precision. Only factor block order differs from baseline; entity traversal, conditional updates, zero-initialized component values, default precision initialization, and independent chain RNG streams are unchanged.","function (model, data, settings) 
+{
+    do.call(sb_internal(""combo_fit_impl""), c(list(model = model, 
+        data = data, factor_order = factor_order), settings))
+}"
+"gibbs_icm","Gibbs factor order ICM","Fixed block order: mean, cell_offset, treatment_offset, treatment_interaction_factors, cell_factors, treatment_main_factors, hyperparameters, observation precision. Only factor block order differs from baseline; entity traversal, conditional updates, zero-initialized component values, default precision initialization, and independent chain RNG streams are unchanged.","function (model, data, settings) 
+{
+    do.call(sb_internal(""combo_fit_impl""), c(list(model = model, 
+        data = data, factor_order = factor_order), settings))
+}"
+"gibbs_imc","Gibbs factor order IMC","Fixed block order: mean, cell_offset, treatment_offset, treatment_interaction_factors, treatment_main_factors, cell_factors, hyperparameters, observation precision. Only factor block order differs from baseline; entity traversal, conditional updates, zero-initialized component values, default precision initialization, and independent chain RNG streams are unchanged.","function (model, data, settings) 
+{
+    do.call(sb_internal(""combo_fit_impl""), c(list(model = model, 
+        data = data, factor_order = factor_order), settings))
+}"
+"gibbs_mci","Gibbs factor order MCI","Fixed block order: mean, cell_offset, treatment_offset, treatment_main_factors, cell_factors, treatment_interaction_factors, hyperparameters, observation precision. Only factor block order differs from baseline; entity traversal, conditional updates, zero-initialized component values, default precision initialization, and independent chain RNG streams are unchanged.","function (model, data, settings) 
+{
+    do.call(sb_internal(""combo_fit_impl""), c(list(model = model, 
+        data = data, factor_order = factor_order), settings))
+}"
+"gibbs_mic","Gibbs factor order MIC","Fixed block order: mean, cell_offset, treatment_offset, treatment_main_factors, treatment_interaction_factors, cell_factors, hyperparameters, observation precision. Only factor block order differs from baseline; entity traversal, conditional updates, zero-initialized component values, default precision initialization, and independent chain RNG streams are unchanged.","function (model, data, settings) 
+{
+    do.call(sb_internal(""combo_fit_impl""), c(list(model = model, 
+        data = data, factor_order = factor_order), settings))
+}"
