@@ -393,6 +393,39 @@ distance, impose monotonicity, or fit a dose-response curve.
 nested_dose_model <- update(feature_model, dose = nested(precision = 4))
 ```
 
+To use concentration distances as well, supply a dose correlation kernel:
+
+```{r}
+#| label: correlated-dose-model
+
+correlated_dose_model <- update(
+    nested_dose_model,
+    dose = nested(
+        precision = 4,
+        correlation = dose_kernel(kernel = "matern32", length_scale = 1)
+    )
+)
+```
+
+This optional model keeps the same compound parents but replaces the independent
+raw dose deviations with covariance $K_i/(4\rho)$ within compound $i$.
+`dose_kernel()` obtains concentrations directly from the experiment design;
+no additional metadata table is needed. By default it uses log10 concentration,
+so a length scale of one means one concentration decade. The exponential kernel
+(the default) supplies local pooling with a sparse precision, while `"matern32"`
+assumes smoother dose dependence. Both allow nonmonotone responses and
+interactions. Compound-parent relationships still come from each component's
+structure; tree-backed models retain their path-variance normalization.
+
+The length scale is fixed and shared across compounds and treatment components.
+Log10 requires positive concentrations; `transform = "identity"` also accepts
+already-transformed coordinates. Numerical dose values are required only when
+correlation is enabled. This option retains the nested model's restriction to
+shrinkage compatible with non-IID structures, as already used by
+`nested_dose_model`. It borrows information for missing responses at treatments
+included in the fitting design, but does not add prediction for entirely new
+treatments. The comparisons below continue to use the original `nested_dose` model.
+
 ### `gmrf`: dependence among entities
 
 The preceding models keep cell and compound residuals independent. We now start

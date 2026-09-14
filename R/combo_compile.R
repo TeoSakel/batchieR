@@ -763,6 +763,9 @@ compile_treatment_structure <- function(spec, dose, treatments) {
             "Treatment"
         ))
     }
+    if (!is.null(dose$correlation)) {
+        return(append_correlated_doses(spec, dose, treatments))
+    }
     compounds <- unique(treatments$drug)
     type <- structure_type(spec)
     if (type == "tree") {

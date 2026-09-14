@@ -8,11 +8,14 @@
 \usage{
 categorical()
 
-nested(precision = 1)
+nested(precision = 1, correlation = NULL)
 }
 \arguments{
 \item{precision}{A finite positive relative precision for dose-to-compound
 edges.}
+
+\item{correlation}{\code{NULL} for independent dose-to-parent deviations, or a
+correlation specification from \code{\link[=dose_kernel]{dose_kernel()}}.}
 }
 \value{
 A dose specification for \code{\link[=combo_model]{combo_model()}}.
@@ -20,5 +23,10 @@ A dose specification for \code{\link[=combo_model]{combo_model()}}.
 \description{
 \code{categorical()} models each observed compound-dose treatment independently.
 \code{nested()} connects doses to a latent compound parent with the supplied
-relative precision.
+relative precision. By default, dose-to-parent deviations are independent.
+Supply \code{\link[=dose_kernel]{dose_kernel()}} to correlate these deviations within each compound
+using numerical dose distances. This applies to all enabled treatment
+offsets, main factors, and interaction factors, without imposing monotonicity.
+Compound parents retain the component's configured relationship structure.
+Tree-backed models retain their existing path-variance normalization.
 }

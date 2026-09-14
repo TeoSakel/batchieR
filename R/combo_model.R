@@ -221,6 +221,10 @@ print.combo_model <- function(x, ...) {
             cli::cli_text("dose: categorical")
         } else {
             cli::cli_text("dose: nested (relative precision {x[['dose']][['precision']]})")
+            correlation <- x$dose$correlation
+            if (!is.null(correlation)) {
+                cli::cli_text("  correlation: {correlation[['kernel']]} ({correlation[['transform']]}, length scale {correlation[['length_scale']]})")
+            }
         }
         cli::cli_text("components:")
         for (name in names(x$components)) {
@@ -661,10 +665,17 @@ formula_mean <- function(
 #'
 #' `categorical()` models each observed compound-dose treatment independently.
 #' `nested()` connects doses to a latent compound parent with the supplied
-#' relative precision.
+#' relative precision. By default, dose-to-parent deviations are independent.
+#' Supply [dose_kernel()] to correlate these deviations within each compound
+#' using numerical dose distances. This applies to all enabled treatment
+#' offsets, main factors, and interaction factors, without imposing monotonicity.
+#' Compound parents retain the component's configured relationship structure.
+#' Tree-backed models retain their existing path-variance normalization.
 #'
 #' @param precision A finite positive relative precision for dose-to-compound
 #'   edges.
+#' @param correlation `NULL` for independent dose-to-parent deviations, or a
+#'   correlation specification from [dose_kernel()].
 #' @return A dose specification for [combo_model()].
 #' @name dose_specifications
 NULL
@@ -677,11 +688,15 @@ categorical <- function() {
 
 #' @rdname dose_specifications
 #' @export
-nested <- function(precision = 1) {
+nested <- function(precision = 1, correlation = NULL) {
+    if (!is.null(correlation) && !inherits(correlation, "combo_dose_kernel")) {
+        cli::cli_abort("correlation must be NULL or a dose_kernel() specification")
+    }
     structure(
         list(
             type = "nested",
-            precision = param_scalar_positive(precision, "precision")
+            precision = param_scalar_positive(precision, "precision"),
+            correlation = correlation
         ),
         class = "combo_dose"
     )
