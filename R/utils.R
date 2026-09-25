@@ -34,6 +34,14 @@ param_scalar_positive <- function(x, label) {
     as.numeric(x)
 }
 
+param_vector_positive <- function(x, label) {
+    if (!is.numeric(x) || is.complex(x) || !length(x) ||
+        anyNA(x) || any(!is.finite(x)) || any(x <= 0)) {
+        cli::cli_abort("{label} must contain finite positive numbers")
+    }
+    as.numeric(x)
+}
+
 is_integer <- function(x) {
     is_number(x) && abs(x) <= .Machine$integer.max && x == trunc(x)
 }

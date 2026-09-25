@@ -111,10 +111,16 @@ test_that("integer predicates require representable scalar integers", {
 
 test_that("numeric parameter helpers retain conversion and targeted conditions", {
     expect_identical(param_scalar_positive(2L, "scale"), 2)
+    expect_identical(param_vector_positive(c(2L, 3L), "shape"), c(2, 3))
     expect_identical(param_positive_integer(2, "count"), 2L)
     for (value in list(0, -1, NA_real_, Inf, NULL, c(1, 2), TRUE, "1", list(1), 1 + 1i)) {
         expect_error(param_scalar_positive(value, "scale"),
             "scale must be one finite positive number", class = "rlang_error")
+    }
+    for (value in list(numeric(), c(1, 0), c(1, -1), c(1, NA_real_),
+        c(1, Inf), TRUE, "1", list(1), 1 + 1i)) {
+        expect_error(param_vector_positive(value, "shape"),
+            "shape must contain finite positive numbers", class = "rlang_error")
     }
     expect_error(param_positive_integer(.Machine$integer.max + 1, "count"),
         "count must be one positive integer", class = "rlang_error")

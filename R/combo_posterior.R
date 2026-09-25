@@ -10,7 +10,7 @@ utils::globalVariables(".data")
 #' replicated observations. For the supported Gaussian identity-link model,
 #' `posterior_linpred()` and `posterior_epred()` are identical.
 #'
-#' @param object A `combo_fit` object.
+#' @param object A `combo_fit` or prediction-only `combo_predictive_mixture`.
 #' @param newdata Optional combination-screen rows. When `NULL`, predictions
 #'   are returned for every input row, including rows with missing responses.
 #' @param type Either `"draws"` for the draws-by-rows matrix or `"mean"` for
@@ -19,6 +19,8 @@ utils::globalVariables(".data")
 #' @param ... Arguments passed between methods.
 #' @return A numeric draws-by-rows matrix, except `predict(..., type = "mean")`,
 #'   which returns one posterior mean per row.
+#'   For predictive mixtures, rows are equally weighted pseudo-draws from the
+#'   realized allocation; the clustering transform is not applied to outputs.
 #' @name posterior_predictions
 NULL
 
@@ -590,8 +592,11 @@ combo_hyperparameter_map <- function(component_name, parameter, prefix, x) {
 #'
 #' Computes the Gaussian log-likelihood for each retained draw and each row
 #' with an observed response. Missing-response rows are omitted.
+#' For a prediction-only mixture, rows are component-conditional log densities
+#' for its equally weighted pseudo-draws. Their columnwise log-mean-exp gives
+#' predictive log densities of the realized empirical mixture.
 #'
-#' @param object A `combo_fit` object.
+#' @param object A `combo_fit` or prediction-only `combo_predictive_mixture`.
 #' @param newdata Optional combination-screen data containing responses. When
 #'   `NULL`, the observed rows from the fitted input are used.
 #' @param ... Reserved for future methods.
@@ -933,6 +938,7 @@ combo_observed_data <- function(object, newdata = NULL) {
 # Shared utilities ---------------------------------------
 
 validate_combo_fit <- function(fit) {
+    if (inherits(fit, "combo_predictive_mixture")) combo_mixture_reject()
     if (!inherits(fit, "combo_fit")) {
         cli::cli_abort("fit must be a combo_fit")
     }

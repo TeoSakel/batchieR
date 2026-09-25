@@ -26,7 +26,8 @@ multiplicative_gamma(shape = 2, rate = 1)
 \item{precision}{Fixed positive precision multiplier \code{p}.}
 
 \item{shape, rate}{Positive gamma shape \code{a} and rate \code{b}. For
-\code{multiplicative_gamma()}, the same pair is applied to every increment.}
+\code{multiplicative_gamma()}, each may be a scalar applied to every increment
+or a vector with one value per latent dimension.}
 
 \item{scale}{Positive half-Cauchy scale for the estimated global or local
 standard-deviation multiplier.}

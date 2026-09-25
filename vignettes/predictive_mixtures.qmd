@@ -1,0 +1,526 @@
+---
+title: "Prediction from chains in different basins"
+author: "Teo Sakel"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    page-layout: article
+    html-math-method: mathml
+    embed-resources: true
+    code-fold: false
+vignette: >
+  %\VignetteIndexEntry{Prediction from chains in different basins}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+knitr::opts_chunk$set(
+    collapse = TRUE,
+    comment = "#>",
+    fig.width = 8,
+    fig.height = 4.5
+)
+```
+
+```{r}
+#| label: libraries
+
+library(batchieR)
+library(ggplot2)
+
+artifact <- function(name) {
+    fname <- paste0("predictive-mixture-", name, "-v2.rds")
+    path <- system.file("extdata", fname, package = "batchieR", mustWork = TRUE)
+    readRDS(path)
+}
+```
+
+## When chains disagree about predictions
+
+MCMC chains can remain in different posterior regions and give different
+predictions for the same experiment. When this happens, pooling their draws
+can make the combined prediction depend on how many chains reached each region.
+We investigate how to recognize this disagreement, assess whether it persists
+within each chain, and combine predictions using predictive performance.
+Combining predictions does not establish posterior convergence.
+
+We build on the introductory and model-checking vignettes, focusing here on
+the consequences of incomplete exploration for prediction.
+
+## Generate synthetic data
+
+We use a rank-6 model with horseshoe treatment shrinkage and an intercept fixed
+at zero. Horseshoe shrinkage allows many coefficients to remain near zero
+while others are large. Combined with the model's interacting latent factors,
+this gives a reason to investigate whether chains settle into different
+explanations of the data. Multiple predictive basins are a possibility to
+check, rather than a guaranteed consequence of this prior.
+
+We cross 24 cells, eight compounds, and three positive dose levels, including
+singles and every pair of distinct compounds. Four replicates provide 26,496
+training observations at 6,624 configurations; a fifth supplies independent
+holdout responses. Complete coverage and replication let us investigate this
+sampling difficulty without missing combinations or a lack of repeated
+measurements. Fitting the generating model also removes model misspecification
+as an explanation.
+
+Responses come directly from one prior predictive draw, without clipping,
+censoring, or screening the generating parameters.
+
+<!-- Fixture provenance: this example retains all ten chains from the completed
+horseshoe experiment. The input and fit metadata retain the original
+sampling settings and chain selection. -->
+
+
+```{r}
+#| label: specify-model
+treatment_prior <- combo_gaussian_component(
+    shrinkage = horseshoe(global_scale = 1, local_scale = 1)
+)
+model <- combo_model(
+    rank = 6,
+    mean = fixed_mean(0),
+    cell_factors = combo_gaussian_component(
+        shrinkage = multiplicative_gamma(shape = c(2, rep(3, 5)), rate = 1)
+    ),
+    treatment_offset = treatment_prior,
+    treatment_main_factors = treatment_prior,
+    treatment_interaction_factors = treatment_prior
+)
+```
+
+```{r}
+#| label: construct-design
+
+cells <- sprintf("cell_%02d", 1:24)
+drugs <- sprintf("drug_%02d", 1:8)
+
+singles <- expand.grid(
+    cell = cells,
+    drug_1 = drugs,
+    dose_1 = 1:3,
+    drug_2 = NA_character_,
+    dose_2 = NA_real_,
+    KEEP.OUT.ATTRS = FALSE,
+    stringsAsFactors = FALSE
+)
+singles$plate <- paste0("complete_single_", singles$cell)
+
+pairs <- expand.grid(
+    cell = cells,
+    drug_1 = drugs,
+    dose_1 = 1:3,
+    drug_2 = drugs,
+    dose_2 = 1:3,
+    KEEP.OUT.ATTRS = FALSE,
+    stringsAsFactors = FALSE
+)
+pairs <- subset(pairs, drug_1 < drug_2)
+pairs$plate <- paste0("complete_pair_", pairs$cell)
+
+design <- rbind(singles, pairs)
+stopifnot(nrow(design) == 6624L)
+```
+
+We replicate the design five times and call `prior_predict()` once with
+`draws = 1` and `type = "response"`. This samples one shared parameter set and
+five conditionally independent responses per configuration. Using `draws = 5`
+would instead sample five parameter sets. We use four replicates for training
+and one for holdout.
+
+```{r}
+#| label: generate-responses
+#| eval: false
+
+generating_model <- model
+replicated_design <- do.call(rbind, replicate(5, design, simplify = FALSE))
+replicated_design[["replicate"]] <- rep(1:5, each = nrow(design))
+simulated_response <- prior_predict(
+    generating_model,
+    replicated_design,
+    draws = 1,
+    type = "response",
+    seed = 20260924
+)
+replicated_design[["response"]] <- as.numeric(simulated_response[1, ])
+training <- subset(replicated_design, replicate <= 4)
+holdout <- subset(replicated_design, replicate == 5)
+
+inputs <- list(design = design, training = training, holdout = holdout)
+saveRDS(inputs, "inst/extdata/predictive-mixture-inputs-v2.rds")
+```
+
+## Fit the model
+
+We fit the same model to the training responses using ten independently
+initialized chains, retaining 800 draws per chain after warm-up. This gives
+multiple opportunities to explore different posterior regions. We run
+generation and fitting offline and save the inputs and fit so rendering the
+vignette does not repeat the sampling.
+
+```{r}
+#| label: fit-replicated-screen
+#| eval: false
+
+fit <- fit_combo(
+    model,
+    training,
+    chains = 10,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 32000,
+    thin = 40,
+    seed = 81401
+)
+saveRDS(fit, "inst/extdata/predictive-mixture-fit-v2.rds")
+```
+
+Here we reload the saved inputs and fit so the analysis uses the same simulated
+data and posterior draws each time the vignette is rendered.
+
+```{r}
+#| label: load-fitted-example
+
+inputs <- artifact("inputs")
+fit <- artifact("fit")
+design <- inputs$design
+training <- inputs$training
+holdout <- inputs$holdout
+```
+
+## The chains do not all agree
+
+The model-checking vignette explains the full QC analysis that needs to follow
+every fit. We start with R-hat and effective sample sizes to identify variables
+whose sampling needs further investigation.
+
+```{r}
+#| label: basin-mixing-diagnostics
+#| eval: false
+
+# Placeholder: inspect the completed experiment before selecting variables
+# with high R-hat or low bulk/tail ESS and enabling this chunk.
+print(fit)
+mixing_variables <- character()  # Fill with public names from parameter_map(fit).
+if (length(mixing_variables)) {
+    summary(fit, select = mixing_variables)
+}
+```
+
+High R-hat and low multi-chain effective sample sizes can arise when chains
+remain in different posterior regions, even if each is locally stable. These
+diagnostics motivate checking for predictive basins, but do not establish
+multimodality on their own. We compare chains' mean predictions to investigate
+whether the mixing problems also affect predictions.
+
+`chain_projections()` averages expected responses over draws at each reference
+configuration, giving one vector per chain. We apply `plogis` before averaging
+to compare predictions on a bounded scale, as in the introductory vignette.
+The function also estimates within-chain variation from four contiguous blocks.
+
+```{r}
+#| label: compute-chain-projections
+projection <- chain_projections(
+    fit, reference_grid = design, response_transform = plogis
+)
+str(projection)
+```
+
+We cluster these vectors into predictive basins: groups of chains with similar
+mean predictions, which need not correspond to distinct posterior modes.
+The deterministic average-linkage rule below mirrors the rule used internally
+by `predictive_mixture()`: accept the largest merge-height gap above the block
+noise floor only when its ratio is at least three.
+
+```{r}
+#| label: cluster-chain-projections
+
+basin_labels <- function(group, chains) {
+    candidates <- unique(group)
+    counts <- vapply(candidates, function(g) sum(group == g), integer(1))
+    first <- vapply(candidates, function(g) min(chains[group == g]), numeric(1))
+    candidates <- candidates[order(-counts, first)]
+    paste0("B", match(group, candidates))
+}
+
+cluster_projection <- function(projection, threshold = 3) {
+    mu <- projection$mean
+    chains <- projection$chains
+    noise_floor <- projection$noise_floor
+
+    distance <- dist(mu) / sqrt(ncol(mu))
+    tree <- hclust(distance, method = "average")
+
+    height <- tree$height
+    ratios <- height[-1L] / pmax(height[-length(height)], noise_floor)
+    gap <- which.max(ratios)
+    cut <- if (ratios[gap] >= threshold) {
+        sqrt(height[gap + 1L] * max(height[gap], noise_floor))
+    } else {
+        max(height)  # should always be the last
+    }
+    group <- cutree(tree, h = cut)
+    list(
+        tree = tree,
+        distance = distance,
+        cut = cut,
+        gap_ratio = ratios[gap],
+        membership = data.frame(chain = chains, basin = basin_labels(group, chains))
+    )
+}
+
+clustering <- cluster_projection(projection)
+membership <- clustering$membership
+basins <- unique(membership$basin)
+core <- membership$chain[membership$basin == "B1"]
+basin_colours <- setNames(hcl.colors(length(basins), "Dark 3"), basins)
+```
+
+```{r}
+#| label: fig-mixture-dendrogram
+#| fig-cap: "Prediction-space clustering computed from the shipped combo_fit. The dotted line is the within-chain block floor; the dashed line is the selected cut."
+
+plot(
+    clustering$tree, xlab = "Chain", sub = "",
+    ylab = "RMS distance between mean-response projections"
+)
+abline(h = projection$noise_floor, lty = 3, col = "grey40")
+if (is.finite(clustering$cut)) {
+    abline(h = clustering$cut, lty = 2, col = "#B24C3E")
+    rect.hclust(
+        clustering$tree,
+        k = length(unique(membership$basin)),
+        border = basin_colours
+    )
+}
+```
+
+The rule identifies **`r length(unique(membership$basin))` predictive basins**.
+The largest contains chains **`r paste(core, collapse = ", ")`**.
+
+### Basin stability
+
+Having identified distinct predictive basins, we next ask whether each
+chain's mean predictions are stable over the sampled interval. We assess
+this by comparing mean-response projections across contiguous parts of each chain.
+
+`chain_projections()` divides each chain into four contiguous blocks of equal
+size (up to one draw). With 800 retained draws, these are four blocks of 200.
+We compare all six pairs of block mean-response projections on the same
+reference grid, using their root-mean-square (RMS) differences. Direct block
+comparisons can reveal movement that a distance to a fixed basin center would
+miss, including movement around that center at a constant distance.
+
+```{r}
+#| label: fig-block-stability
+#| fig-cap: "Within-chain block-pair RMS differences relative to the minimum basin-center distance. Points show all six comparisons per chain, coloured by chain; boxes are descriptive summaries. The reference line at 1 is shown only when within the data-driven plotting range."
+
+block_stability <- projection$block_distances
+block_stability$basin <- factor(
+    membership$basin[match(block_stability$chain, membership$chain)],
+    levels = basins
+)
+chain_basin <- membership$basin[match(projection$chains, membership$chain)]
+basin_mean <- t(vapply(
+    basins,
+    function(basin) colMeans(projection$mean[chain_basin == basin, , drop = FALSE]),
+    numeric(ncol(projection$mean))
+))
+min_basin_dist <- min(dist(basin_mean)) / sqrt(ncol(basin_mean))
+block_stability$plot_distance <- block_stability$distance / min_basin_dist
+
+p <- ggplot(block_stability, aes(basin, plot_distance)) +
+    geom_boxplot(width = .5, outlier.shape = NA, fill = "grey95") +
+    geom_point(
+        aes(colour = factor(chain)),
+        position = position_jitter(width = .12, height = 0),
+        size = 2, alpha = .8
+    ) +
+    scale_colour_brewer(palette = "Set3") +
+    labs(
+        x = "Predictive basin",
+        y = "RMS difference / minimum basin-center distance",
+        colour = "Chain"
+    ) +
+    theme_minimal()
+if (1 <= 1.05 * max(block_stability$plot_distance)) {
+    p <- p + geom_hline(yintercept = 1, linetype = "dashed", colour = "grey40")
+}
+p
+```
+
+We average the chain projection vectors within each basin to define its center,
+then divide the block distances by the minimum RMS distance between basin
+centers. This expresses temporal variation relative to the observed separation
+between basins.
+
+Each box summarizes the six within-chain block comparisons per chain in
+that basin; point colours identify chains. Values near zero indicate small
+temporal differences relative to the minimum basin-center separation. Small
+values across all six comparisons for a chain support local stability of its
+mean predictions over the sampled interval.
+
+This diagnostic assesses stability of mean predictions, not the full predictive
+distributions. Four-block summaries can miss changes within blocks, and RMS
+averages can conceal changes at individual configurations. Agreement does not
+establish convergence or rule out later transitions between basins.
+
+## Basin stacking
+
+Distinct basins give different predictions for the same configurations, leaving
+us to decide how much each should contribute to a combined prediction. With
+equally long chains, pooling draws weights basins according to how many chains
+reached them. Those counts reflect initialization and sampling dynamics and
+need not represent posterior basin probabilities or predictive performance.
+
+For prediction, we can instead treat each basin's predictive distribution as
+a candidate component and choose mixture weights by predictive performance.
+Stacking chooses weights jointly to maximize the mixture's leave-one-out log
+predictive score, allowing basins to contribute where their predictions are
+useful. Here we approximate the leave-one-out predictive densities within each
+basin using Pareto-smoothed importance sampling (PSIS) on the training observations.
+
+For basin $b$, let $\widehat p_{b,-i}(y_i)$ denote its conditional PSIS
+estimate. The weights solve
+
+$$
+\widehat w = \arg\max_{w_b\geq0,\;\sum_b w_b=1}
+    \sum_{i=1}^{n}\log\left\{\sum_b w_b\widehat p_{b,-i}(y_i)\right\}.
+$$
+
+`predictive_mixture()` performs three steps:
+
+1. Clusters chains using agglomerative clustering as shown above.
+2. Computes basin-specific PSIS-LOO predictive densities.
+3. Optimizes the stacking weights.
+
+It returns a weighted mixture of basin predictive distributions, represented by
+`ndraws` selected draws from the fitted chains. The returned object records
+which basin each chain belongs to in `membership`, the fitted and represented
+weights in `weights`, and the leave-one-out diagnostics in `psis`. We inspect
+those weights and diagnostics below.
+
+```{r}
+#| label: construct-predictive-mixture
+mixture <- predictive_mixture(
+    fit,
+    reference_grid = design,
+    response_transform = plogis,
+    ndraws = 400
+)
+```
+
+The weights table has one row per basin. `fitted` is its optimized predictive
+weight; `count` is the number of selected draws and `realized` is
+`count / ndraws`, the weight used by the returned empirical mixture.
+`allocation_error` is `realized - fitted`; values near zero indicate little
+rounding error. `omitted_positive` flags a positive fitted weight that received
+no draws. These weights describe contributions to the combined prediction,
+not posterior basin probabilities or a ranking of standalone basin performance.
+
+```{r}
+#| label: tbl-mixture-weights
+#| tbl-cap: "PSIS-LOO stacking weights and their representation by selected draws."
+knitr::kable(mixture$weights, digits = 6, row.names = FALSE)
+```
+
+The PSIS table reports whether the leave-one-out approximation is dependable
+for each basin. `observations` and `draws` give the training-row count and the
+draw count used for that basin. `maximum_k` is the largest Pareto-k diagnostic;
+`threshold` is the draw-dependent cutoff used here. `flagged` counts rows above
+that cutoff or with missing diagnostics. `count_ge_1` and `fraction_over_0_7`
+highlight large Pareto-k values; fewer problematic rows is better.
+`elpd_loo` is the basin's total estimated leave-one-out log predictive density:
+higher is better when the PSIS approximation is reliable. It scores the basin
+alone, whereas stacking optimizes the combined prediction.
+
+```{r}
+#| label: tbl-mixture-psis
+#| tbl-cap: "PSIS diagnostics computed from every observed training row."
+knitr::kable(mixture$psis$diagnostics, digits = 4, row.names = FALSE)
+```
+
+The PSIS status is **`r if (mixture$psis$reliable) "reliable under the implemented thresholds" else "flagged as unreliable"`**.
+A failure weakens the stacking recommendation even when finite weights are
+available. Passing does not prove global convergence or discover an unvisited
+basin.
+
+## Evaluate prediction on untouched data
+
+The returned `combo_predictive_mixture` supports `predict()`,
+`posterior_predict()`, and `log_lik()` for evaluating combined predictions.
+Parameter extraction is unsupported because stacking weights target predictive
+performance rather than posterior basin probabilities.
+
+The following evaluated helper computes holdout log predictive density, error,
+and predictive coverage from the original pooled fit and the fitted mixture.
+`log_lik()` returns a draw-by-observation matrix, so predictive density is a
+stable log-mean-exp over draws.
+
+```{r}
+#| label: tbl-holdout-live
+#| tbl-cap: "Fresh-holdout performance, recomputed from the combo_fit and predictive mixture."
+
+log_mean_exp <- function(value) {
+    maximum <- apply(value, 2, max)
+    maximum + log(colMeans(exp(sweep(value, 2, maximum, "-"))))
+}
+
+evaluate_prediction <- function(object, label, holdout, seed = 20260925) {
+    resid <- predict(object, newdata = holdout, type = "mean") - holdout$response
+    lpd <- log_mean_exp(log_lik(object, newdata = holdout))
+    set.seed(seed)
+    interval <- object |>
+        posterior_predict(newdata = holdout) |>
+        apply(2, quantile, probs = c(.05, .95))
+    data.frame(
+        method = label,
+        draws = length(object$draws),
+        total_elpd = sum(lpd),
+        mean_elpd = mean(lpd),
+        rmse = sqrt(mean(resid^2)),
+        mae = mean(abs(resid)),
+        coverage_90 = mean(
+            holdout$response >= interval[1, ] &
+                holdout$response <= interval[2, ]
+        )
+    )
+}
+metrics <- rbind(
+    evaluate_prediction(fit, "Naive equal-chain pooling", holdout),
+    evaluate_prediction(mixture, "PSIS-LOO basin stacking", holdout)
+)
+
+knitr::kable(metrics, digits = 4, row.names = FALSE)
+```
+
+The holdout table compares equal-chain pooling with the stacked mixture on
+responses not used to fit the weights.
+
+- `draws` reports the number of draws in each predictive representation.
+- Higher `total_elpd` and `mean_elpd` mean better holdout log predictive density.
+- Lower `rmse` and `mae` mean smaller prediction errors.
+- `coverage_90` is the fraction of responses inside the 90% predictive intervals,
+  i.e. 0.90 is the nominal target.
+
+
+## Guidelines
+
+1. Fit multiple independently initialized chains and perform the usual model
+   checks before assessing disagreement in mean-response projections.
+2. When predictive basins appear, compare contiguous blocks within each chain
+   to assess stability of its mean predictions. Investigate drift before
+   treating a basin as a persistent predictive component.
+3. When locally stable predictive basins remain, inspect basin-specific PSIS
+   diagnostics before interpreting stacking weights, then compare the combined
+   predictions with equal-chain pooling on untouched data.
+4. Interpret stacking weights as contributions to a predictive mixture, not
+   posterior basin probabilities. Stacking does not repair mixing or establish
+   convergence.
+5. Retain the original `combo_fit` for parameter analyses, subject to its
+   convergence limitations; use the mixture to evaluate combined predictions.

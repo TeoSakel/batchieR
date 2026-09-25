@@ -433,7 +433,8 @@ param_shrinkage <- function(type, ...) {
 #'
 #' @param precision Fixed positive precision multiplier `p`.
 #' @param shape,rate Positive gamma shape `a` and rate `b`. For
-#'   `multiplicative_gamma()`, the same pair is applied to every increment.
+#'   `multiplicative_gamma()`, each may be a scalar applied to every increment
+#'   or a vector with one value per latent dimension.
 #' @param scale Positive half-Cauchy scale for the estimated global or local
 #'   standard-deviation multiplier.
 #' @param global_scale,local_scale Positive half-Cauchy scales for the
@@ -495,8 +496,8 @@ horseshoe <- function(global_scale = 1, local_scale = 1) {
 multiplicative_gamma <- function(shape = 2, rate = 1) {
     param_shrinkage(
         "multiplicative_gamma",
-        shape = param_scalar_positive(shape, "shape"),
-        rate = param_scalar_positive(rate, "rate")
+        shape = param_vector_positive(shape, "shape"),
+        rate = param_vector_positive(rate, "rate")
     )
 }
 

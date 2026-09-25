@@ -18,6 +18,8 @@ Description: Fits Bayesian latent factor models to combination-response
 License: GPL (>= 3)
 Encoding: UTF-8
 LazyData: true
+Depends:
+    R (>= 3.5.0)
 Imports:
     cli,
     future,
@@ -38,7 +40,8 @@ Suggests:
     quarto (>= 1.5.0),
     remotes,
     rmarkdown,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    withr
 VignetteBuilder: knitr, quarto
 SystemRequirements: Quarto command-line tools (https://quarto.org)
 Config/testthat/edition: 3
