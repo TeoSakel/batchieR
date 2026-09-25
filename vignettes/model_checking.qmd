@@ -6,9 +6,8 @@ format:
   html:
     toc: true
     toc-depth: 2
-    html-math-method: mathjax
-    theme: none
-    minimal: true
+    page-layout: article
+    html-math-method: mathml
     embed-resources: true
 vignette: >
   %\VignetteIndexEntry{Checking combination-response models}
@@ -104,6 +103,7 @@ responses from the full model's prior.
 
 ```{r}
 #| label: diagnostic-data
+#| eval: false
 cells <- c("A", "B", "C")
 drugs <- c("X", "Y", "Z")
 drug_pairs <- c("X:Y", "X:Z", "Y:Z")
@@ -138,6 +138,7 @@ screen <- read.csv(
     system.file("extdata", "model_checking.csv", package = "batchieR", mustWork = TRUE),
     stringsAsFactors = FALSE
 )
+doses <- sort(unique(c(screen$dose_1, screen$dose_2[!is.na(screen$dose_2)])))
 ```
 
 Finally, fit both models to these same simulated observations.
@@ -199,7 +200,7 @@ cell_offset_params <- with(
     variable[component == "cell_offset" & parameter == "value"]
 )
 diagnostic_variables <- c("sigma", cell_offset_params)
-summary(full_fit, variable = diagnostic_variables)
+summary(full_fit, select = diagnostic_variables)
 ```
 
 - `mean` and `median` summarize each parameter,
@@ -216,7 +217,7 @@ optional for this call.
 
 ```{r}
 #| label: tidy-summaries
-parameter_summary <- tidy(full_fit, variable = diagnostic_variables)
+parameter_summary <- tidy(full_fit, select = diagnostic_variables)
 parameter_summary[, c(
     "term", "estimate", "std.error", "conf.low", "conf.high",
     "rhat", "ess_bulk", "ess_tail"
@@ -236,7 +237,7 @@ iterations and chains and can be passed directly to `summarize_draws()`:
 
 ```{r}
 #| label: posterior-summaries
-selected_draws <- as_draws_array(full_fit, variable = diagnostic_variables)
+selected_draws <- as_draws_array(full_fit, select = diagnostic_variables)
 summarize_draws(selected_draws, default_convergence_measures())
 ```
 
@@ -263,6 +264,458 @@ Each color represents a chain. Look for
 
 These plots cover only the selected parameters and exclude warmup.
 They do not override problems reported elsewhere in the fit's overview.
+
+## Check agreement in prediction space
+
+Standard R-hat and ESS summaries are necessary, but latent-factor models require
+one additional distinction:
+
+- **Factor non-identifiability** changes raw factor coordinates without changing
+  the response surface.
+- **Posterior uncertainty** is variation among draws within the distribution a
+  chain is exploring.
+- **Within-chain drift** means successive parts of a chain have not stabilized.
+- **Predictive separation** means stable chains imply different expected
+  responses. This is the disagreement that ordinary pooling can conceal.
+
+The public `chain_projections()` helper compares chains through expected
+responses rather than raw factor coordinates. The example below uses a complete
+24-cell, eight-drug, three-dose factorial design with four replicates. Its truth
+is bounded, all six dimensions are active, and the response model is Gaussian.
+The favorable design deliberately removes sparse coverage and absent
+replication as explanations for disagreement.
+
+### Reproduce the fitted example
+
+The initial run uses ten chains with 2,000 warmup and 32,000 post-warmup
+transitions each. For a tractable installed vignette, the shipped teaching fit
+keeps three chains from the largest predictive basin and two stable departures,
+with 400 evenly spaced draws from each full trajectory. The package ships only
+the resulting synthetic data and `combo_fit`; all projection, clustering, and
+plotting code that follows is evaluated while the vignette is rendered.
+is evaluated while the vignette is rendered.
+
+```{r}
+#| label: generate-prediction-space-fit
+#| eval: false
+#| code-fold: true
+#| code-summary: "Generate and fit the controlled example"
+
+rank <- 6L
+dimension_weights <- 0.85^(0:(rank - 1L))
+treatment_key <- function(drug, dose) {
+  paste(drug, sprintf("%.17g", dose), sep = "\034")
+}
+bounded_direction <- function(n, dimensions = rank) {
+  value <- matrix(pmax(-0.8, pmin(0.8, rnorm(n * dimensions))),
+                  nrow = n)
+  value <- sweep(value, 2, colMeans(value), "-")
+  sweep(value, 2, sqrt(colMeans(value^2)), "/")
+}
+truth_terms <- function(data, truth) {
+  cell <- match(data$cell, truth$cells)
+  a <- match(treatment_key(data$drug_1, data$dose_1),
+             truth$treatments$key)
+  has_b <- !is.na(data$drug_2)
+  b <- rep(NA_integer_, nrow(data))
+  b[has_b] <- match(
+    treatment_key(data$drug_2[has_b], data$dose_2[has_b]),
+    truth$treatments$key
+  )
+  W <- truth$cell_factors[cell, , drop = FALSE]
+  V1a <- truth$treatment_main_factors[a, , drop = FALSE]
+  V1b <- V2b <- matrix(0, nrow(data), rank)
+  V1b[has_b, ] <- truth$treatment_main_factors[b[has_b], ,
+                                                drop = FALSE]
+  V2a <- truth$treatment_interaction_factors[a, , drop = FALSE]
+  V2b[has_b, ] <- truth$treatment_interaction_factors[b[has_b], ,
+                                                       drop = FALSE]
+  cell_offset <- truth$cell_offset[cell]
+  treatment_offset <- truth$treatment_offset[a]
+  treatment_offset[has_b] <- treatment_offset[has_b] +
+    truth$treatment_offset[b[has_b]]
+  list(
+    cell_offset = cell_offset,
+    treatment_offset = treatment_offset,
+    main_dimension = W * (V1a + V1b),
+    interaction_dimension = W * V2a * V2b
+  )
+}
+
+cells <- sprintf("cell_%02d", 1:24)
+treatments <- expand.grid(
+  drug = sprintf("drug_%02d", 1:8), dose = 1:3,
+  KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE
+)
+treatments$key <- treatment_key(treatments$drug, treatments$dose)
+single_index <- expand.grid(
+  cell = cells, treatment = seq_len(nrow(treatments)),
+  KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE
+)
+singles <- data.frame(
+  cell = single_index$cell,
+  drug_1 = treatments$drug[single_index$treatment],
+  dose_1 = treatments$dose[single_index$treatment],
+  drug_2 = NA_character_, dose_2 = NA_real_
+)
+edges <- combn(seq_len(nrow(treatments)), 2)
+edges <- edges[, treatments$drug[edges[1, ]] !=
+                 treatments$drug[edges[2, ]]]
+pair_index <- expand.grid(
+  cell = cells, edge = seq_len(ncol(edges)),
+  KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE
+)
+a <- edges[1, pair_index$edge]
+b <- edges[2, pair_index$edge]
+pairs <- data.frame(
+  cell = pair_index$cell,
+  drug_1 = treatments$drug[a], dose_1 = treatments$dose[a],
+  drug_2 = treatments$drug[b], dose_2 = treatments$dose[b]
+)
+design <- rbind(singles, pairs)
+stopifnot(nrow(design) == 6624L)
+
+set.seed(20260922L)
+truth <- list(
+  cells = cells,
+  treatments = treatments,
+  weights = dimension_weights,
+  cell_offset = as.numeric(bounded_direction(length(cells), 1L)),
+  cell_factors = sweep(
+    bounded_direction(length(cells)), 2, sqrt(dimension_weights), "*"
+  ),
+  treatment_offset = as.numeric(
+    bounded_direction(nrow(treatments), 1L)
+  ),
+  treatment_main_factors = sweep(
+    bounded_direction(nrow(treatments)), 2,
+    sqrt(dimension_weights), "*"
+  ),
+  treatment_interaction_factors = sweep(
+    bounded_direction(nrow(treatments)), 2,
+    dimension_weights^0.25, "*"
+  )
+)
+targets <- c(
+  cell_offset = 0.3, treatment_offset = 0.6,
+  main = 0.8, interaction = 0.8, sigma = 0.5
+)
+initial <- truth_terms(design, truth)
+truth$cell_offset <- truth$cell_offset * targets["cell_offset"] /
+  sd(initial$cell_offset)
+truth$treatment_offset <- truth$treatment_offset *
+  targets["treatment_offset"] / sd(initial$treatment_offset)
+truth$treatment_main_factors <- truth$treatment_main_factors *
+  targets["main"] / sd(rowSums(initial$main_dimension))
+truth$treatment_interaction_factors <-
+  truth$treatment_interaction_factors *
+  sqrt(targets["interaction"] /
+       sd(rowSums(initial$interaction_dimension)))
+scaled <- truth_terms(design, truth)
+truth$intercept <- median(
+  -scaled$cell_offset - scaled$treatment_offset -
+    rowSums(scaled$main_dimension) -
+    rowSums(scaled$interaction_dimension)
+) + 0.15426520414136
+truth$precision <- 1 / targets["sigma"]^2
+
+truth_mean <- function(data, truth) {
+  terms <- truth_terms(data, truth)
+  truth$intercept + terms$cell_offset + terms$treatment_offset +
+    rowSums(terms$main_dimension) +
+    rowSums(terms$interaction_dimension)
+}
+generate_responses <- function(data, truth, seed,
+                               rng = "Mersenne-Twister") {
+  RNGkind(rng, "Inversion", "Rejection")
+  set.seed(seed)
+  result <- data
+  mean <- truth_mean(data, truth)
+  result$response <- rnorm(nrow(data), mean, 1 / sqrt(truth$precision))
+  result
+}
+training_seeds <- c(41100L, 80001L, 80002L, 80003L)
+training <- do.call(rbind, lapply(seq_along(training_seeds), function(i) {
+  result <- generate_responses(design, truth, training_seeds[i])
+  result$replicate <- i
+  result
+}))
+holdout <- generate_responses(
+  design, truth, 20260924L, rng = "L'Ecuyer-CMRG"
+)
+
+treatment_prior <- combo_gaussian_component(
+  shrinkage = horseshoe(global_scale = 1, local_scale = 1)
+)
+model <- combo_model(
+  rank = rank,
+  mean = empirical_mean(),
+  cell_factors = combo_gaussian_component(
+    shrinkage = multiplicative_gamma(
+      shape = c(2, rep(3, rank - 1L)), rate = 1
+    )
+  ),
+  treatment_offset = treatment_prior,
+  treatment_main_factors = treatment_prior,
+  treatment_interaction_factors = treatment_prior
+)
+full_fit <- fit_combo(
+  model, training, chains = 10, parallel_chains = 4,
+  iter_warmup = 2000, iter_sampling = 32000, thin = 40,
+  seed = 81401
+)
+subset_combo_fit <- function(object, keep) {
+  result <- object
+  result$draws <- result$draws[keep]
+  result$chain_id <- result$chain_id[keep]
+  result$draw_id <- result$draw_id[keep]
+  result$iteration <- result$iteration[keep]
+  result$sampling$chains <- length(unique(result$chain_id))
+  result
+}
+selected_chains <- c(1L, 3L, 4L, 6L, 10L)
+keep <- full_fit$chain_id %in% selected_chains &
+  full_fit$draw_id %% 2L == 0L
+fit <- subset_combo_fit(full_fit, keep)
+fit$draw_id <- ave(fit$draw_id, fit$chain_id, FUN = seq_along)
+saveRDS(
+  list(
+    fixture_id = "rank6-horseshoe-bounded-truth-v1",
+    design = design, training = training, holdout = holdout,
+    truth = truth, truth_mean = truth_mean(design, truth), model = model,
+    settings = list(
+      transform = "plogis", blocks = 4L, holdout_seed = 20260924L,
+      fixture_chains = selected_chains, retained_per_chain = 400L,
+      source_retained_per_chain = 800L
+    )
+  ),
+  "inst/extdata/predictive-mixture-inputs-v1.rds",
+  compress = "xz", version = 3
+)
+saveRDS(
+  fit, "inst/extdata/predictive-mixture-fit-v1.rds",
+  compress = "xz", version = 3
+)
+```
+
+Load those two inputs, then perform the diagnostic itself. Nothing below this
+point is a saved QC result.
+
+```{r}
+#| label: load-prediction-space-fit
+input_path <- system.file(
+  "extdata", "predictive-mixture-inputs-v1.rds",
+  package = "batchieR", mustWork = TRUE
+)
+fit_path <- system.file(
+  "extdata", "predictive-mixture-fit-v1.rds",
+  package = "batchieR", mustWork = TRUE
+)
+inputs <- readRDS(input_path)
+fit <- readRDS(fit_path)
+design <- inputs$design
+stopifnot(
+  inherits(fit, "combo_fit"),
+  identical(sort(unique(fit$chain_id)), c(1L, 3L, 4L, 6L, 10L)),
+  all(table(fit$chain_id) == 400L)
+)
+```
+
+```{r}
+#| label: compute-prediction-space-qc
+projection <- chain_projections(
+  fit, reference_grid = design, response_transform = plogis
+)
+
+basin_labels <- function(group, chains) {
+  groups <- unique(group)
+  counts <- vapply(groups, function(g) sum(group == g), integer(1))
+  first <- vapply(groups, function(g) min(chains[group == g]), numeric(1))
+  groups <- groups[order(-counts, first)]
+  paste0("B", match(group, groups))
+}
+cluster_projections <- function(projection, threshold = 3) {
+  distance <- as.matrix(dist(projection$mean)) /
+    sqrt(ncol(projection$mean))
+  tree <- hclust(as.dist(distance), method = "average")
+  heights <- tree$height
+  ratios <- if (length(heights) == 1L) {
+    heights / projection$noise_floor
+  } else {
+    heights[-1L] /
+      pmax(heights[-length(heights)], projection$noise_floor)
+  }
+  gap <- which.max(ratios)
+  cut <- Inf
+  if (ratios[gap] >= threshold) {
+    lower <- if (length(heights) == 1L) {
+      projection$noise_floor
+    } else {
+      max(heights[gap], projection$noise_floor)
+    }
+    upper <- if (length(heights) == 1L) heights else heights[gap + 1L]
+    cut <- sqrt(lower * upper)
+  }
+  group <- if (is.finite(cut)) {
+    cutree(tree, h = cut)
+  } else {
+    rep(1L, length(projection$chains))
+  }
+  list(
+    tree = tree, distance = distance, cut = cut,
+    gap_ratio = ratios[gap], noise_floor = projection$noise_floor,
+    membership = data.frame(
+      chain = projection$chains,
+      basin = basin_labels(group, projection$chains)
+    )
+  )
+}
+qc <- list(clustering = cluster_projections(projection))
+membership <- qc$clustering$membership
+```
+
+### Compare chains with their own block variation
+
+For chain $c$, retained draw $s$, and reference configuration $g$, define
+
+$$
+z_{cg} =
+\frac{1}{S_c}\sum_{s=1}^{S_c}T(\mu_{csg}),
+\qquad
+d(c,c') =
+\sqrt{\frac{1}{G}\sum_{g=1}^{G}
+  \left(z_{cg}-z_{c'g}\right)^2}.
+$$
+
+Here $T=\operatorname{logit}^{-1}$ puts expected responses on the viability
+scale. Each chain is also divided into four contiguous retained-draw blocks.
+The pooled 95th percentile of within-chain block distances is an empirical
+noise floor. It can reflect both Monte Carlo variation and drift; it is not a
+formal standard error.
+
+```{r}
+#| label: prediction-space-dendrogram
+#| fig-cap: "Average-linkage clustering of chain-average expected responses. The dotted line is the empirical within-chain block floor and the dashed line is the selected separation cut."
+tree <- qc$clustering$tree
+plot(tree, xlab = "Chain", sub = "",
+     ylab = "RMS distance between prediction projections")
+abline(h = qc$clustering$noise_floor, lty = 3, col = "grey40")
+if (is.finite(qc$clustering$cut)) {
+  abline(h = qc$clustering$cut, lty = 2, col = "#B24C3E")
+  rect.hclust(
+    tree, k = length(unique(membership$basin)),
+    border = grDevices::hcl.colors(
+      length(unique(membership$basin)), "Dark 3"
+    )
+  )
+}
+```
+
+The split is accepted only when the largest adjacent merge-height ratio is at
+least three after bounding the lower height by the block noise floor. In this
+fixture the rule finds **`r length(unique(membership$basin))` predictive
+basins**. Basin labels summarize chain similarity; they are not posterior mode
+probabilities.
+
+A dendrogram alone cannot distinguish stable separation from chains that are
+still moving. Compare every block with the full-run center of the largest
+basin.
+
+```{r}
+#| label: prediction-block-stability
+#| fig-cap: "Distance from each contiguous chain block to the largest-basin prediction center. Persistent separated trajectories indicate prediction-relevant non-mixing."
+largest_basin <- names(sort(table(membership$basin),
+                            decreasing = TRUE))[1L]
+largest_chains <- membership$chain[
+  membership$basin == largest_basin
+]
+center <- colMeans(
+  projection$mean[
+    projection$chains %in% largest_chains, , drop = FALSE
+  ]
+)
+block_stability <- do.call(rbind, lapply(
+  seq_along(projection$chains),
+  function(i) {
+    blocks <- matrix(projection$block_mean[i, , ], nrow = 4L)
+    data.frame(
+      chain = factor(projection$chains[[i]]),
+      block = 1:4,
+      distance = sqrt(rowMeans(sweep(blocks, 2, center, "-")^2)),
+      basin = membership$basin[
+        match(projection$chains[[i]], membership$chain)
+      ]
+    )
+  }
+))
+ggplot(
+  block_stability,
+  aes(block, distance, group = chain, colour = basin)
+) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = 1:4) +
+  theme_minimal() +
+  labs(
+    x = "Contiguous retained-draw block",
+    y = "RMS distance to largest-basin center",
+    colour = "Predictive basin"
+  )
+```
+
+Mean agreement can conceal different uncertainty. The same projection records
+the variability of expected responses and observation noise separately.
+
+```{r}
+#| label: predictive-spread-by-basin
+#| fig-cap: "Chain-level predictive and observation variances by predictive basin. Points are chains; boxes summarize basins with multiple chains."
+spread <- data.frame(
+  chain = projection$chains,
+  basin = membership$basin[
+    match(projection$chains, membership$chain)
+  ],
+  predictive_variance = rowMeans(projection$predictive_variance),
+  observation_variance = projection$noise_variance
+)
+spread_long <- rbind(
+  data.frame(
+    chain = spread$chain, basin = spread$basin,
+    diagnostic = "Mean predictive variance",
+    value = spread$predictive_variance
+  ),
+  data.frame(
+    chain = spread$chain, basin = spread$basin,
+    diagnostic = "Observation-noise variance",
+    value = spread$observation_variance
+  )
+)
+ggplot(spread_long, aes(basin, value, colour = basin)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 0.25) +
+  geom_jitter(width = 0.08, height = 0, size = 2) +
+  facet_wrap(~ diagnostic, scales = "free_y") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(x = "Predictive basin", y = "Variance")
+```
+
+### Interpret the result
+
+Use the following sequence:
+
+1. Check reconstructed main effects, interaction effects, and other public
+   quantities with R-hat and ESS.
+2. Compare chain projections with their within-chain blocks.
+3. If chains drift across blocks, extend sampling before interpreting clusters.
+4. If blocks are stable and all chains occupy one predictive region, ordinary
+   pooling is reasonable even when raw factor coordinates disagree.
+5. If stable predictive regions remain separated, ordinary equal-chain pooling
+   assigns weights according to initialization counts. Continue with the
+   [predictive-mixtures vignette](predictive_mixtures.html).
+
+This clustering rule is a deterministic diagnostic heuristic, not a
+convergence test. A single detected group cannot exclude unvisited regions,
+and agreement of chain means can conceal different predictive spreads or
+distribution shapes.
 
 ## Check predictions with bayesplot
 
